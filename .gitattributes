@@ -1,0 +1,16 @@
+# Normalizar finales de línea entre Windows / Linux / macOS
+* text=auto eol=lf
+
+# Binarios
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.pdf binary
+*.woff binary
+*.woff2 binary
+*.ico binary
+
+# Shell scripts siempre LF
+*.sh text eol=lf
