@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     app_env: str = "development"
     app_version: str = "0.1.0"
     port: int = 8080
-    cors_origins: str = "http://localhost:5173"
+    cors_origins: str = "http://localhost:5174"
 
     @property
     def cors_origins_list(self) -> list[str]:
