@@ -3,7 +3,7 @@ import { auth } from '../firebase.js'
 
 const baseURL = import.meta.env.VITE_API_URL || 'http://localhost:8080'
 
-export const api = axios.create({ baseURL, timeout: 10000 })
+export const api = axios.create({ baseURL, timeout: 60000 })
 
 // Inyecta el Firebase ID token en cada request
 api.interceptors.request.use(async (config) => {

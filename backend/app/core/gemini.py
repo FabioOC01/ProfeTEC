@@ -8,20 +8,26 @@ import os
 from app.config import settings
 
 _model = None
-MODEL_ID = "gemini-1.5-flash-002"
+MODEL_ID = "gemini-2.5-flash"
 
 SYSTEM_PROMPT = (
     "Eres ProfeTEC.IA, un asistente tutor virtual del Instituto TECSUP. "
-    "Tu función es ayudar a los estudiantes a comprender el material de sus cursos.\n\n"
-    "REGLAS IMPORTANTES:\n"
-    "1. Responde ÚNICAMENTE con información del contexto del material del curso proporcionado.\n"
-    "2. Si la información no está en el contexto, di: "
+    "Tu función principal es ayudar a los estudiantes a comprender el material de sus cursos.\n\n"
+    "CÓMO RESPONDER SEGÚN EL TIPO DE PREGUNTA:\n\n"
+    "A) SALUDOS Y PREGUNTAS SOBRE TI (ej: 'hola', '¿quién eres?', '¿qué puedes hacer?'):\n"
+    "   Responde de forma amigable y breve presentándote como ProfeTEC.IA, tutor virtual "
+    "de TECSUP. Explica que puedes ayudar con dudas sobre el material del curso. "
+    "No necesitas citar fuentes para este tipo de respuestas.\n\n"
+    "B) PREGUNTAS ACADÉMICAS SOBRE EL CONTENIDO DEL CURSO:\n"
+    "   1. Responde ÚNICAMENTE con información del contexto proporcionado.\n"
+    "   2. Si la información no está en el contexto, di: "
     "'Esta información no se encuentra en el material del curso disponible.'\n"
-    "3. Cita siempre la fuente al final de cada idea relevante con el formato: "
+    "   3. Cita la fuente al final de cada idea relevante con el formato: "
     "[📄 {nombre_documento}, pág. {pagina}]\n"
-    "4. Responde en español con tono didáctico y amigable.\n"
-    "5. Sé conciso pero completo. Usa listas o pasos cuando facilite la comprensión.\n"
-    "6. No inventes información ni uses conocimiento externo al contexto."
+    "   4. No inventes información ni uses conocimiento externo al contexto.\n\n"
+    "REGLAS GENERALES:\n"
+    "- Responde siempre en español con tono didáctico y amigable.\n"
+    "- Sé conciso pero completo. Usa listas o pasos cuando facilite la comprensión."
 )
 
 
@@ -51,35 +57,46 @@ def _get_model():
     return _model
 
 
+# Configuración de generación — controla longitud y creatividad
+GENERATION_CONFIG = {
+    "max_output_tokens": 512,   # ~350-400 palabras máximo
+    "temperature": 0.3,          # bajo = más factual, menos creativo
+    "top_p": 0.9,
+}
+
+
 def generar_respuesta(pregunta: str, chunks: list[dict]) -> str:
     """
-    Construye el prompt con los chunks como contexto y genera la respuesta via Gemini.
-    Si no hay chunks relevantes, retorna un mensaje estándar.
+    Construye el prompt y genera la respuesta via Gemini.
+    Si hay chunks, los usa como contexto (pregunta académica).
+    Si no hay chunks, deja que Gemini decida (saludo, presentación, o fuera de alcance).
     """
-    if not chunks:
-        return (
-            "No encontré información relevante en el material del curso "
-            "para responder tu pregunta. Intenta reformularla o consulta a tu docente."
-        )
+    if chunks:
+        partes_contexto = []
+        for i, chunk in enumerate(chunks, 1):
+            partes_contexto.append(
+                f"[Fragmento {i} — {chunk['nombre_doc']}, pág. {chunk['pagina']}]\n"
+                f"{chunk['texto']}"
+            )
+        contexto = "\n\n---\n\n".join(partes_contexto)
 
-    # Construir contexto enumerado
-    partes_contexto = []
-    for i, chunk in enumerate(chunks, 1):
-        partes_contexto.append(
-            f"[Fragmento {i} — {chunk['nombre_doc']}, pág. {chunk['pagina']}]\n"
-            f"{chunk['texto']}"
+        prompt = (
+            f"Contexto del material del curso:\n\n"
+            f"{contexto}\n\n"
+            f"---\n\n"
+            f"Pregunta del estudiante: {pregunta}\n\n"
+            f"Responde basándote únicamente en el contexto anterior, "
+            f"citando las fuentes con el formato indicado."
         )
-    contexto = "\n\n---\n\n".join(partes_contexto)
-
-    prompt = (
-        f"Contexto del material del curso:\n\n"
-        f"{contexto}\n\n"
-        f"---\n\n"
-        f"Pregunta del estudiante: {pregunta}\n\n"
-        f"Responde basándote únicamente en el contexto anterior, "
-        f"citando las fuentes con el formato indicado."
-    )
+    else:
+        # Sin contexto: el modelo decide si es saludo, presentación o pregunta fuera de alcance
+        prompt = (
+            f"Mensaje del estudiante: {pregunta}\n\n"
+            f"No hay contexto del material del curso que coincida con esta pregunta. "
+            f"Si es un saludo o una pregunta sobre ti, responde amigablemente siguiendo las reglas. "
+            f"Si es una pregunta académica, indica que la información no está en el material disponible."
+        )
 
     model = _get_model()
-    response = model.generate_content(prompt)
+    response = model.generate_content(prompt, generation_config=GENERATION_CONFIG)
     return response.text

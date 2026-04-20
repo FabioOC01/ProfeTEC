@@ -9,7 +9,7 @@ def recuperar_chunks(
     curso_id: str,
     pregunta: str,
     db,
-    top_k: int = 5,
+    top_k: int = 3,
     score_minimo: float = 0.3,
 ) -> list[dict]:
     """
