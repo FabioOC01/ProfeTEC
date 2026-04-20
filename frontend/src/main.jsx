@@ -9,6 +9,7 @@ import Login from './pages/Login.jsx'
 import Onboarding from './pages/Onboarding.jsx'
 import Dashboard from './pages/Dashboard.jsx'
 import CursosList from './pages/cursos/CursosList.jsx'
+import CursoDetalle from './pages/cursos/CursoDetalle.jsx'
 
 import './index.css'
 
@@ -29,6 +30,10 @@ createRoot(document.getElementById('root')).render(
 
           <Route path="/cursos" element={
             <RequireAuth><CursosList /></RequireAuth>
+          } />
+
+          <Route path="/cursos/:cursoId" element={
+            <RequireAuth><CursoDetalle /></RequireAuth>
           } />
 
           {/* Fallback */}

@@ -94,6 +94,7 @@ export default function CursosList() {
               </div>
               {c.descripcion && <p style={s.cardDesc}>{c.descripcion}</p>}
               <div style={s.cardActions}>
+                <button onClick={() => navigate(`/cursos/${c.id}`)} style={{ ...s.btnSmall, background: '#2f81f7', color: '#fff', border: 'none' }}>Ver material</button>
                 <button onClick={() => abrirEditar(c)} style={s.btnSmall}>Editar</button>
                 <button onClick={() => eliminar(c)} style={{ ...s.btnSmall, color: 'var(--error)' }}>
                   Eliminar
