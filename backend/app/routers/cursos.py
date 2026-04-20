@@ -61,18 +61,27 @@ def crear_curso(
     return nuevo
 
 
-@router.get("", response_model=list[CursoResponse], summary="Listar cursos del docente (RF-05)")
+@router.get("", response_model=list[CursoResponse], summary="Listar cursos (RF-05)")
 def listar_cursos(
     activo: Optional[bool] = None,
     claims: dict = Depends(get_current_user),
     db=Depends(get_db),
 ):
+    """
+    Docentes: ven solo sus propios cursos.
+    Estudiantes: ven todos los cursos activos (acceso simplificado — sin matrícula por ahora).
+    """
     uid = claims["uid"]
-    _get_usuario_o_403(uid, db)
+    usuario = _get_usuario_o_403(uid, db)
+    rol = usuario.get("rol")
 
-    query = db.collection("cursos").where("docente_id", "==", uid)
-    if activo is not None:
-        query = query.where("activo", "==", activo)
+    if rol == "docente":
+        query = db.collection("cursos").where("docente_id", "==", uid)
+        if activo is not None:
+            query = query.where("activo", "==", activo)
+    else:
+        # Estudiantes ven todos los cursos activos
+        query = db.collection("cursos").where("activo", "==", True)
 
     docs = query.stream()
     return [_doc_to_curso(d) for d in docs]
@@ -84,6 +93,7 @@ def obtener_curso(
     claims: dict = Depends(get_current_user),
     db=Depends(get_db),
 ):
+    """Cualquier usuario registrado puede ver el detalle de un curso."""
     uid = claims["uid"]
     _get_usuario_o_403(uid, db)
 
@@ -91,12 +101,7 @@ def obtener_curso(
     if not doc.exists:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Curso no encontrado.")
 
-    data = _doc_to_curso(doc)
-    # Docentes solo ven sus propios cursos; estudiantes verán cursos en Sprint 2
-    if data["docente_id"] != uid:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
-                            detail="No tienes acceso a este curso.")
-    return data
+    return _doc_to_curso(doc)
 
 
 @router.patch("/{curso_id}", response_model=CursoResponse, summary="Editar curso (RF-05)")

@@ -1,9 +1,12 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { getCursos, createCurso, updateCurso, deleteCurso } from '../../api/cursos.js'
+import { useAuth } from '../../context/AuthContext.jsx'
 
 export default function CursosList() {
   const navigate = useNavigate()
+  const { perfil } = useAuth()
+  const isDocente = perfil?.rol === 'docente'
   const [cursos, setCursos] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -70,9 +73,11 @@ export default function CursosList() {
       <header style={s.header}>
         <div>
           <button onClick={() => navigate('/dashboard')} style={s.btnBack}>← Dashboard</button>
-          <h1 style={s.titulo}>Mis cursos</h1>
+          <h1 style={s.titulo}>{isDocente ? 'Mis cursos' : 'Cursos disponibles'}</h1>
         </div>
-        <button onClick={abrirCrear} style={s.btnPrimario}>+ Nuevo curso</button>
+        {isDocente && (
+          <button onClick={abrirCrear} style={s.btnPrimario}>+ Nuevo curso</button>
+        )}
       </header>
 
       {error && <p style={s.error}>{error}</p>}
@@ -81,8 +86,10 @@ export default function CursosList() {
         <p style={s.dim}>Cargando cursos…</p>
       ) : cursos.length === 0 ? (
         <div style={s.vacio}>
-          <p>Aún no tienes cursos.</p>
-          <button onClick={abrirCrear} style={s.btnPrimario}>Crear primer curso</button>
+          <p>{isDocente ? 'Aún no tienes cursos.' : 'No hay cursos disponibles.'}</p>
+          {isDocente && (
+            <button onClick={abrirCrear} style={s.btnPrimario}>Crear primer curso</button>
+          )}
         </div>
       ) : (
         <div style={s.grid}>
@@ -94,11 +101,17 @@ export default function CursosList() {
               </div>
               {c.descripcion && <p style={s.cardDesc}>{c.descripcion}</p>}
               <div style={s.cardActions}>
-                <button onClick={() => navigate(`/cursos/${c.id}`)} style={{ ...s.btnSmall, background: '#2f81f7', color: '#fff', border: 'none' }}>Ver material</button>
-                <button onClick={() => abrirEditar(c)} style={s.btnSmall}>Editar</button>
-                <button onClick={() => eliminar(c)} style={{ ...s.btnSmall, color: 'var(--error)' }}>
-                  Eliminar
+                <button onClick={() => navigate(`/cursos/${c.id}`)} style={{ ...s.btnSmall, background: '#2f81f7', color: '#fff', border: 'none' }}>
+                  {isDocente ? 'Ver material' : '💬 Chatear'}
                 </button>
+                {isDocente && (
+                  <>
+                    <button onClick={() => abrirEditar(c)} style={s.btnSmall}>Editar</button>
+                    <button onClick={() => eliminar(c)} style={{ ...s.btnSmall, color: 'var(--error)' }}>
+                      Eliminar
+                    </button>
+                  </>
+                )}
               </div>
             </div>
           ))}

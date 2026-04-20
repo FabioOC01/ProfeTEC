@@ -152,7 +152,10 @@ def listar_documentos(
     db=Depends(get_db),
 ):
     uid = claims["uid"]
-    _verificar_curso(curso_id, uid, db)
+    # Cualquier usuario puede listar documentos (lectura); solo docentes pueden subir/eliminar
+    doc = db.collection("cursos").document(curso_id).get()
+    if not doc.exists:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Curso no encontrado.")
 
     docs = (
         db.collection("documentos")

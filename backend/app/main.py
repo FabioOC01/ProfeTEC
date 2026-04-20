@@ -4,7 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.core.firebase import init_firebase
 from app.routers import health
-from app.routers import auth_router, cursos, documentos
+from app.routers import auth_router, cursos, documentos, chat
 
 # Intentar inicializar Firebase al arrancar (falla silenciosamente si no hay credenciales)
 init_firebase()
@@ -27,6 +27,7 @@ app.include_router(health.router)
 app.include_router(auth_router.router)
 app.include_router(cursos.router)
 app.include_router(documentos.router)
+app.include_router(chat.router)
 
 
 @app.get("/", tags=["root"])
