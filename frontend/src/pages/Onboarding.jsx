@@ -6,14 +6,14 @@ const OPCIONES = [
   {
     rol: 'docente',
     titulo: 'Soy docente',
-    desc: 'Subo material de estudio y gestiono cursos.',
-    icon: '👨‍🏫',
+    desc: '',
+    icon: '',
   },
   {
     rol: 'estudiante',
     titulo: 'Soy estudiante',
-    desc: 'Consulto al tutor y respondo quizzes.',
-    icon: '👨‍🎓',
+    desc: '',
+    icon: '',
   },
 ]
 
@@ -24,7 +24,6 @@ export default function Onboarding() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
 
-  // Si ya tiene rol, saltar al dashboard directamente
   if (!needsOnboarding && profile?.rol) {
     navigate('/dashboard', { replace: true })
     return null

@@ -1,18 +1,18 @@
 import { useEffect, useRef, useState } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useParams } from 'react-router-dom'
 import { getCurso } from '../../api/cursos.js'
 import { deleteDocumento, getDocumentos, uploadDocumento } from '../../api/documentos.js'
 import { enviarPregunta, getHistorial } from '../../api/chat.js'
 import { useAuth } from '../../context/AuthContext.jsx'
+import Navbar from '../../components/Navbar.jsx'
 
 const TIPOS_ACEPTADOS = '.pdf,.pptx,.txt'
 const ICONOS = { pdf: '📄', pptx: '📊', txt: '📝' }
 
 export default function CursoDetalle() {
   const { cursoId } = useParams()
-  const navigate = useNavigate()
-  const { perfil } = useAuth()
-  const isDocente = perfil?.rol === 'docente'
+  const { profile } = useAuth()
+  const isDocente = profile?.rol === 'docente'
 
   // ── Refs ──────────────────────────────────────────────────────────────────
   const inputRef = useRef(null)
@@ -149,39 +149,49 @@ export default function CursoDetalle() {
     setCitasAbiertas((prev) => ({ ...prev, [msgId]: !prev[msgId] }))
 
   // ── Render ─────────────────────────────────────────────────────────────────
-  if (loading) return <p style={s.dim}>Cargando…</p>
+  if (loading) {
+    return (
+      <>
+        <Navbar breadcrumb="Cursos" />
+        <main style={s.main}><p style={s.dim}>Cargando…</p></main>
+      </>
+    )
+  }
+
+  const breadcrumb = curso?.nombre ? `Cursos › ${curso.nombre}` : 'Cursos'
 
   return (
-    <main style={s.main}>
-      {/* ── Header ── */}
-      <header style={s.header}>
-        <div>
-          <button onClick={() => navigate('/cursos')} style={s.btnBack}>← Mis cursos</button>
-          <h1 style={s.titulo}>{curso?.nombre}</h1>
-          <p style={s.sub}>
-            Código: <code style={s.code}>{curso?.codigo}</code>
-            {curso?.descripcion && ` · ${curso.descripcion}`}
-          </p>
-        </div>
-        {isDocente && (
-          <div style={s.actions}>
-            <input
-              ref={inputRef}
-              type="file"
-              accept={TIPOS_ACEPTADOS}
-              style={{ display: 'none' }}
-              onChange={handleFile}
-            />
-            <button
-              onClick={() => inputRef.current?.click()}
-              disabled={uploading}
-              style={{ ...s.btnPrimario, opacity: uploading ? 0.6 : 1 }}
-            >
-              {uploading ? `Procesando… ${progreso}%` : '+ Subir documento'}
-            </button>
+    <>
+      <Navbar breadcrumb={breadcrumb} />
+      <main style={s.main}>
+        {/* ── Header ── */}
+        <header style={s.header}>
+          <div>
+            <h1 style={s.titulo}>{curso?.nombre}</h1>
+            <p style={s.sub}>
+              Código: <code style={s.code}>{curso?.codigo}</code>
+              {curso?.descripcion && ` · ${curso.descripcion}`}
+            </p>
           </div>
-        )}
-      </header>
+          {isDocente && (
+            <div style={s.actions}>
+              <input
+                ref={inputRef}
+                type="file"
+                accept={TIPOS_ACEPTADOS}
+                style={{ display: 'none' }}
+                onChange={handleFile}
+              />
+              <button
+                onClick={() => inputRef.current?.click()}
+                disabled={uploading}
+                style={{ ...s.btnPrimario, opacity: uploading ? 0.6 : 1 }}
+              >
+                {uploading ? `Procesando… ${progreso}%` : '+ Subir documento'}
+              </button>
+            </div>
+          )}
+        </header>
 
       {uploading && (
         <div style={s.progressBar}>
@@ -229,7 +239,7 @@ export default function CursoDetalle() {
       {/* ── Chat con el tutor ── */}
       <section>
         <h2 style={s.h2}>
-          💬 Chat con ProfeTEC.IA
+         Chat con ProfeTEC.IA
           {mensajes.length > 0 && (
             <span style={s.badge}>{mensajes.length} mensajes</span>
           )}
@@ -336,7 +346,8 @@ export default function CursoDetalle() {
           Las respuestas se basan únicamente en el material subido al curso.
         </p>
       </section>
-    </main>
+      </main>
+    </>
   )
 }
 

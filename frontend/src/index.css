@@ -1,40 +1,80 @@
 :root {
   --bg: #0d1117;
   --card: #161b22;
+  --card-hover: #1c232c;
   --border: #30363d;
+  --border-strong: #484f58;
   --text: #e6edf3;
   --text-dim: #8b949e;
   --accent: #2f81f7;
+  --accent-dim: rgba(47, 129, 247, 0.15);
   --ok: #3fb950;
   --error: #f85149;
+
   color-scheme: dark;
-  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
   background: var(--bg);
   color: var(--text);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
 }
 
 * {
   box-sizing: border-box;
 }
 
+html,
 body {
   margin: 0;
   min-height: 100vh;
+  background: var(--bg);
 }
 
 #root {
   min-height: 100vh;
 }
 
+/* ── Selección de texto ───────────────────────────────────────── */
+::selection {
+  background: var(--accent-dim);
+  color: var(--text);
+}
+
+/* ── Scrollbar oscuro (Chromium) ──────────────────────────────── */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: var(--bg);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 6px;
+  border: 2px solid var(--bg);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--border-strong);
+}
+
+/* Firefox */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) var(--bg);
+}
+
+/* ── Enlaces ───────────────────────────────────────────────────── */
 a {
   color: var(--accent);
   text-decoration: none;
+  transition: color 0.15s ease;
 }
-
 a:hover {
   text-decoration: underline;
 }
 
+/* ── Botones ───────────────────────────────────────────────────── */
 button {
   font: inherit;
   cursor: pointer;
@@ -43,9 +83,65 @@ button {
   color: var(--text);
   padding: 0.5rem 1rem;
   border-radius: 6px;
-  transition: background 0.15s;
+  transition: background 0.15s ease, border-color 0.15s ease,
+    transform 0.08s ease, color 0.15s ease;
+}
+button:hover:not(:disabled) {
+  background: var(--card-hover);
+  border-color: var(--border-strong);
+}
+button:active:not(:disabled) {
+  transform: translateY(1px);
+}
+button:disabled {
+  cursor: not-allowed;
 }
 
-button:hover {
-  background: var(--border);
+/* ── Inputs / textarea ─────────────────────────────────────────── */
+input,
+textarea,
+select {
+  font: inherit;
+  color: var(--text);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+input:focus,
+textarea:focus,
+select:focus {
+  outline: none;
+  border-color: var(--accent) !important;
+  box-shadow: 0 0 0 3px var(--accent-dim);
+}
+
+/* ── Focus accesible para teclado (no mouse) ───────────────────── */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+button:focus,
+a:focus {
+  outline: none;
+}
+button:focus-visible,
+a:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ── Animaciones reutilizables ─────────────────────────────────── */
+@keyframes pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* ── Código inline ─────────────────────────────────────────────── */
+code {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.875em;
 }

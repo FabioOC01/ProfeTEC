@@ -25,7 +25,7 @@ export default function Login() {
     <main style={s.main}>
       <div style={s.card}>
         <h1 style={s.title}>ProfeTEC.IA</h1>
-        <p style={s.sub}>Tutor virtual inteligente para estudiantes de TECSUP</p>
+        <p style={s.sub}> Tu Tutor virtual</p>
 
         <button onClick={handleGoogle} disabled={loading} style={s.btn}>
           {loading ? 'Ingresando…' : '▶ Continuar con Google'}

@@ -1,113 +1,142 @@
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext.jsx'
+import Navbar from '../components/Navbar.jsx'
 
 export default function Dashboard() {
-  const { profile, firebaseUser, logout } = useAuth()
+  const { profile, firebaseUser } = useAuth()
   const navigate = useNavigate()
 
-  const handleLogout = async () => {
-    await logout()
-    navigate('/login', { replace: true })
-  }
-
   const esDocente = profile?.rol === 'docente'
+  const nombre = (profile?.nombre || firebaseUser?.displayName || '').split(' ')[0]
 
   return (
-    <main style={s.main}>
-      <header style={s.header}>
-        <h1 style={s.logo}>ProfeTEC.IA</h1>
-        <div style={s.user}>
-          {firebaseUser?.photoURL && (
-            <img src={firebaseUser.photoURL} alt="avatar" style={s.avatar} />
-          )}
-          <span style={s.nombre}>{profile?.nombre || firebaseUser?.displayName}</span>
-          <span style={s.rol}>{profile?.rol}</span>
-          <button onClick={handleLogout} style={s.btnLogout}>Salir</button>
-        </div>
-      </header>
+    <>
+      <Navbar />
+      <main style={s.main}>
+        <section style={s.hero}>
+          <h1 style={s.titulo}>
+            Hola{nombre ? `, ${nombre}` : ''} 
+          </h1>
+          <p style={s.subtitulo}>
+            {esDocente
+              ? 'Gestiona tus cursos, sube material y deja que ProfeTEC.IA responda a tus estudiantes.'
+              : 'Explora tus cursos y consulta al tutor virtual sobre cualquier duda del material.'}
+          </p>
+        </section>
 
-      <section style={s.bienvenida}>
-        <h2 style={s.h2}>Bienvenido de vuelta</h2>
-        <p style={s.p}>
-          {esDocente
-            ? 'Gestiona tus cursos y sube material para que tus estudiantes puedan consultarlo.'
-            : 'Consulta el tutor inteligente sobre el material de tus cursos.'}
-        </p>
-      </section>
+        <section>
+          <h2 style={s.h2}>Acciones rápidas</h2>
+          <div style={s.grid}>
+            <ActionCard
+              icon=""
+              titulo={esDocente ? 'Mis cursos' : 'Cursos disponibles'}
+              desc={
+                esDocente
+                  ? 'Crea, edita y gestiona tus cursos y material.'
+                  : 'Explora los cursos y empieza a chatear con el tutor.'
+              }
+              onClick={() => navigate('/cursos')}
+            />
 
-      <div style={s.acciones}>
-        {esDocente && (
-          <ActionCard
-            icon="📚"
-            titulo="Mis cursos"
-            desc="Crear, editar y gestionar tus cursos."
-            onClick={() => navigate('/cursos')}
-          />
-        )}
-        <ActionCard
-          icon="💬"
-          titulo="Chat con el tutor"
-          desc="Consulta al asistente IA sobre el material."
-          onClick={() => navigate('/chat')}
-          disabled
-          badge="Sprint 3"
-        />
-        <ActionCard
-          icon="📝"
-          titulo="Quizzes"
-          desc="Genera y responde evaluaciones automáticas."
-          onClick={() => {}}
-          disabled
-          badge="Sprint 6"
-        />
-      </div>
-    </main>
+            <ActionCard
+              icon=""
+              titulo="Chat con el tutor"
+              desc="Abre un curso y conversa con ProfeTEC.IA sobre el material."
+              onClick={() => navigate('/cursos')}
+            />
+
+            <ActionCard
+              icon=""
+              titulo="Quizzes"
+              desc="Genera y responde evaluaciones automáticas."
+              onClick={() => {}}
+              disabled
+              badge=""
+            />
+
+            <ActionCard
+              icon=""
+              titulo="Panel docente"
+              desc="Métricas de uso, preguntas frecuentes y feedback."
+              onClick={() => {}}
+              disabled
+              badge=""
+            />
+          </div>
+        </section>
+
+        <section style={s.infoSection}>
+          <div style={s.infoCard}>
+            <h3 style={s.infoTitulo}> Sobre ProfeTEC.IA</h3>
+            <p style={s.infoTexto}>
+              Tutor virtual con inteligencia artificial construido sobre Vertex AI
+              (Gemini 2.5 Flash) + RAG. Las respuestas se basan únicamente en el
+              material subido por tus docentes, con citas al documento fuente.
+            </p>
+          </div>
+          <div style={s.infoCard}>
+            <h3 style={s.infoTitulo}>Tu privacidad</h3>
+            <p style={s.infoTexto}>
+              Solo accedes al material de los cursos permitidos. Tus conversaciones
+              son privadas y únicamente tú puedes verlas en tu historial.
+            </p>
+          </div>
+        </section>
+      </main>
+    </>
   )
 }
 
 function ActionCard({ icon, titulo, desc, onClick, disabled = false, badge }) {
   return (
-    <button onClick={onClick} disabled={disabled} style={{ ...s.card, opacity: disabled ? 0.5 : 1 }}>
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      style={{ ...s.card, opacity: disabled ? 0.45 : 1, cursor: disabled ? 'not-allowed' : 'pointer' }}
+    >
       <span style={s.cardIcon}>{icon}</span>
-      <div>
-        <strong style={s.cardTitulo}>{titulo}</strong>
-        {badge && <span style={s.badge}>{badge}</span>}
+      <div style={{ flex: 1 }}>
+        <div style={s.cardHeader}>
+          <strong style={s.cardTitulo}>{titulo}</strong>
+          {badge && <span style={s.badge}>{badge}</span>}
+        </div>
         <p style={s.cardDesc}>{desc}</p>
       </div>
+      {!disabled && <span style={s.cardArrow}>→</span>}
     </button>
   )
 }
 
 const s = {
-  main: { minHeight: '100vh', padding: '1.5rem', maxWidth: 900, margin: '0 auto' },
-  header: {
-    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-    padding: '0 0 1.5rem', borderBottom: '1px solid var(--border)', marginBottom: '2rem',
-  },
-  logo: { margin: 0, fontSize: '1.25rem' },
-  user: { display: 'flex', alignItems: 'center', gap: '0.75rem' },
-  avatar: { width: 32, height: 32, borderRadius: '50%' },
-  nombre: { fontSize: '0.9rem' },
-  rol: {
-    fontSize: '0.75rem', background: '#2f81f720', color: '#2f81f7',
-    padding: '0.2rem 0.5rem', borderRadius: 4, textTransform: 'capitalize',
-  },
-  btnLogout: { fontSize: '0.8rem', padding: '0.3rem 0.75rem', borderRadius: 6 },
-  bienvenida: { marginBottom: '2rem' },
-  h2: { margin: '0 0 0.5rem' },
-  p: { color: 'var(--text-dim)', margin: 0 },
-  acciones: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '1rem' },
+  main: { maxWidth: 1100, margin: '0 auto', padding: '2rem 1.5rem' },
+  hero: { marginBottom: '2.5rem' },
+  titulo: { margin: 0, fontSize: '2rem', fontWeight: 700, letterSpacing: '-0.02em' },
+  subtitulo: { color: 'var(--text-dim)', margin: '0.5rem 0 0', fontSize: '1rem', maxWidth: 640 },
+  h2: { fontSize: '0.85rem', color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.08em', margin: '0 0 1rem' },
+  grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: '1rem' },
   card: {
-    display: 'flex', flexDirection: 'column', gap: '0.75rem',
+    display: 'flex', alignItems: 'flex-start', gap: '0.9rem',
     background: 'var(--card)', border: '1px solid var(--border)',
-    borderRadius: 10, padding: '1.5rem', textAlign: 'left',
-    cursor: 'pointer', transition: 'border-color 0.15s', color: 'var(--text)',
+    borderRadius: 12, padding: '1.25rem', textAlign: 'left',
+    color: 'var(--text)', transition: 'border-color 0.2s, transform 0.1s, background 0.2s',
   },
-  cardIcon: { fontSize: '1.75rem' },
-  cardTitulo: { display: 'block', marginBottom: '0.25rem' },
-  cardDesc: { margin: 0, fontSize: '0.8rem', color: 'var(--text-dim)' },
+  cardIcon: { fontSize: '1.75rem', flexShrink: 0 },
+  cardHeader: { display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.3rem', flexWrap: 'wrap' },
+  cardTitulo: { fontSize: '0.95rem' },
+  cardDesc: { margin: 0, fontSize: '0.825rem', color: 'var(--text-dim)', lineHeight: 1.45 },
+  cardArrow: { color: 'var(--text-dim)', fontSize: '1.2rem', alignSelf: 'center', transition: 'transform 0.15s' },
   badge: {
-    marginLeft: '0.5rem', fontSize: '0.65rem', background: 'var(--border)',
-    color: 'var(--text-dim)', padding: '0.1rem 0.4rem', borderRadius: 4,
+    fontSize: '0.65rem', background: 'var(--border)', color: 'var(--text-dim)',
+    padding: '0.15rem 0.5rem', borderRadius: 99, fontWeight: 500, letterSpacing: '0.02em',
   },
+  infoSection: {
+    marginTop: '3rem',
+    display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '1rem',
+  },
+  infoCard: {
+    background: 'var(--card)', border: '1px solid var(--border)',
+    borderRadius: 12, padding: '1.25rem',
+  },
+  infoTitulo: { margin: '0 0 0.5rem', fontSize: '0.95rem' },
+  infoTexto: { margin: 0, fontSize: '0.825rem', color: 'var(--text-dim)', lineHeight: 1.55 },
 }

@@ -4,11 +4,6 @@ Tutor virtual basado en IA para estudiantes de TECSUP. Arquitectura RAG multimod
 
 Proyecto de tesis — Orlando Fabio Ochoa Cuenca, TECSUP, carrera de Diseño y Desarrollo de Software.
 
-## Estado
-
-**Sprint 0 — Bootstrap** (esqueletos y `/health` funcionando).
-
-Hoja de ruta completa en [`docs/sprints.md`](docs/sprints.md).
 
 ## Estructura
 

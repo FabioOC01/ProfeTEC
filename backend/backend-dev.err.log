@@ -1,0 +1,6 @@
+INFO:     Will watch for changes in these directories: ['C:\\Users\\FabioPC\\Documents\\ProfeTEC\\backend']
+INFO:     Uvicorn running on http://127.0.0.1:8080 (Press CTRL+C to quit)
+INFO:     Started reloader process [21540] using WatchFiles
+INFO:     Started server process [21572]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.

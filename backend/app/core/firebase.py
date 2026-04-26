@@ -22,18 +22,18 @@ def init_firebase() -> bool:
         if cred_path and os.path.exists(cred_path):
             cred = credentials.Certificate(cred_path)
             firebase_admin.initialize_app(cred)
-            print(f"[firebase] ✓ Inicializado con service account: {cred_path}")
+            print(f"[firebase] OK Inicializado con service account: {cred_path}")
         elif project_id:
             firebase_admin.initialize_app(options={"projectId": project_id})
-            print(f"[firebase] ✓ Inicializado con Application Default Credentials (proyecto: {project_id})")
+            print(f"[firebase] OK Inicializado con Application Default Credentials (proyecto: {project_id})")
         else:
-            print("[firebase] ⚠ Sin credenciales — endpoints de auth no disponibles.")
+            print("[firebase] WARN Sin credenciales - endpoints de auth no disponibles.")
             return False
 
         _initialized = True
         return True
     except Exception as exc:
-        print(f"[firebase] ✗ Error al inicializar: {exc}")
+        print(f"[firebase] ERROR al inicializar: {exc}")
         return False
 
 

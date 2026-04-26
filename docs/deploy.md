@@ -57,7 +57,6 @@ curl https://profetec-backend-xxxxx-uc.a.run.app/health
 ```bash
 cd frontend
 
-# Usar la URL real del backend
 export BACKEND_URL=https://profetec-backend-xxxxx-uc.a.run.app
 
 gcloud run deploy profetec-frontend \

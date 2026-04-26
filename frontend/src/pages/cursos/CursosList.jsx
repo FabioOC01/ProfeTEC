@@ -2,11 +2,12 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { getCursos, createCurso, updateCurso, deleteCurso } from '../../api/cursos.js'
 import { useAuth } from '../../context/AuthContext.jsx'
+import Navbar from '../../components/Navbar.jsx'
 
 export default function CursosList() {
   const navigate = useNavigate()
-  const { perfil } = useAuth()
-  const isDocente = perfil?.rol === 'docente'
+  const { profile } = useAuth()
+  const isDocente = profile?.rol === 'docente'
   const [cursos, setCursos] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -69,16 +70,22 @@ export default function CursosList() {
   }
 
   return (
-    <main style={s.main}>
-      <header style={s.header}>
-        <div>
-          <button onClick={() => navigate('/dashboard')} style={s.btnBack}>← Dashboard</button>
-          <h1 style={s.titulo}>{isDocente ? 'Mis cursos' : 'Cursos disponibles'}</h1>
-        </div>
-        {isDocente && (
-          <button onClick={abrirCrear} style={s.btnPrimario}>+ Nuevo curso</button>
-        )}
-      </header>
+    <>
+      <Navbar breadcrumb="Cursos" />
+      <main style={s.main}>
+        <header style={s.header}>
+          <div>
+            <h1 style={s.titulo}>{isDocente ? 'Mis cursos' : 'Cursos disponibles'}</h1>
+            <p style={s.subtitulo}>
+              {isDocente
+                ? 'Administra tus cursos y el material que ProfeTEC.IA usará para responder.'
+                : 'Abre un curso para conversar con el tutor virtual sobre el material.'}
+            </p>
+          </div>
+          {isDocente && (
+            <button onClick={abrirCrear} style={s.btnPrimario}>+ Nuevo curso</button>
+          )}
+        </header>
 
       {error && <p style={s.error}>{error}</p>}
 
@@ -118,54 +125,55 @@ export default function CursosList() {
         </div>
       )}
 
-      {modal && (
-        <div style={s.overlay}>
-          <div style={s.modalCard}>
-            <h2 style={s.modalTitulo}>
-              {modal === 'crear' ? 'Nuevo curso' : 'Editar curso'}
-            </h2>
+        {modal && (
+          <div style={s.overlay}>
+            <div style={s.modalCard}>
+              <h2 style={s.modalTitulo}>
+                {modal === 'crear' ? 'Nuevo curso' : 'Editar curso'}
+              </h2>
 
-            <label style={s.label}>Nombre *</label>
-            <input
-              style={s.input}
-              value={form.nombre}
-              onChange={(e) => setForm({ ...form, nombre: e.target.value })}
-              placeholder="Ej: Algoritmos y Estructuras de Datos"
-              autoFocus
-            />
+              <label style={s.label}>Nombre *</label>
+              <input
+                style={s.input}
+                value={form.nombre}
+                onChange={(e) => setForm({ ...form, nombre: e.target.value })}
+                placeholder="Ej: Algoritmos y Estructuras de Datos"
+                autoFocus
+              />
 
-            <label style={s.label}>Descripción</label>
-            <textarea
-              style={{ ...s.input, minHeight: 80, resize: 'vertical' }}
-              value={form.descripcion}
-              onChange={(e) => setForm({ ...form, descripcion: e.target.value })}
-              placeholder="Descripción breve del curso…"
-            />
+              <label style={s.label}>Descripción</label>
+              <textarea
+                style={{ ...s.input, minHeight: 80, resize: 'vertical' }}
+                value={form.descripcion}
+                onChange={(e) => setForm({ ...form, descripcion: e.target.value })}
+                placeholder="Descripción breve del curso…"
+              />
 
-            {error && <p style={s.error}>{error}</p>}
+              {error && <p style={s.error}>{error}</p>}
 
-            <div style={s.modalActions}>
-              <button onClick={() => setModal(null)} style={s.btnSmall}>Cancelar</button>
-              <button
-                onClick={guardar}
-                disabled={!form.nombre.trim() || saving}
-                style={{ ...s.btnPrimario, opacity: !form.nombre.trim() || saving ? 0.5 : 1 }}
-              >
-                {saving ? 'Guardando…' : 'Guardar'}
-              </button>
+              <div style={s.modalActions}>
+                <button onClick={() => setModal(null)} style={s.btnSmall}>Cancelar</button>
+                <button
+                  onClick={guardar}
+                  disabled={!form.nombre.trim() || saving}
+                  style={{ ...s.btnPrimario, opacity: !form.nombre.trim() || saving ? 0.5 : 1 }}
+                >
+                  {saving ? 'Guardando…' : 'Guardar'}
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
-    </main>
+        )}
+      </main>
+    </>
   )
 }
 
 const s = {
-  main: { minHeight: '100vh', padding: '1.5rem', maxWidth: 900, margin: '0 auto' },
-  header: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: '1.5rem' },
-  btnBack: { fontSize: '0.8rem', marginBottom: '0.5rem', background: 'none', border: 'none', color: 'var(--text-dim)', cursor: 'pointer', padding: 0 },
-  titulo: { margin: 0, fontSize: '1.5rem' },
+  main: { maxWidth: 1100, margin: '0 auto', padding: '2rem 1.5rem' },
+  header: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: '1.5rem', gap: '1rem', flexWrap: 'wrap' },
+  titulo: { margin: 0, fontSize: '1.75rem', fontWeight: 700, letterSpacing: '-0.02em' },
+  subtitulo: { color: 'var(--text-dim)', margin: '0.35rem 0 0', fontSize: '0.9rem', maxWidth: 560 },
   btnPrimario: { background: '#2f81f7', color: '#fff', border: 'none', borderRadius: 8, padding: '0.5rem 1.25rem', cursor: 'pointer', fontWeight: 600 },
   error: { color: 'var(--error)', marginBottom: '1rem', fontSize: '0.875rem' },
   dim: { color: 'var(--text-dim)' },
