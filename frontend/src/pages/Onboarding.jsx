@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext.jsx'
 
@@ -24,10 +24,13 @@ export default function Onboarding() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
 
-  if (!needsOnboarding && profile?.rol) {
-    navigate('/dashboard', { replace: true })
-    return null
-  }
+  useEffect(() => {
+    if (!needsOnboarding && profile?.rol) {
+      navigate('/dashboard', { replace: true })
+    }
+  }, [needsOnboarding, profile?.rol, navigate])
+
+  if (!needsOnboarding && profile?.rol) return null
 
   const handleConfirm = async () => {
     if (!selected) return
