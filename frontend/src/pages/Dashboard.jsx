@@ -34,6 +34,7 @@ export default function Dashboard() {
   }, [])
 
   const greeting = useGreeting()
+  const heroFace = useCyclingFace()
   const primerCurso = cursos[0]
 
   const abrirTutor = () => {
@@ -90,7 +91,7 @@ export default function Dashboard() {
 
           <div style={s.mascotWrap}>
             <div style={s.mascotOrb}>
-              <TutorBlob size={130} />
+              <TutorBlob size={130} expression={heroFace} />
             </div>
             <div style={s.statusPill}>
               <span style={s.statusDot} />
@@ -214,7 +215,7 @@ export default function Dashboard() {
               }}
             >
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
-                <TutorBlob size={42} />
+                <TutorBlob size={42} expression="content" />
                 <div style={{ fontSize: 13, color: 'var(--ink-700)' }}>
                   {esDocente
                     ? 'Sube tu primer PDF y el tutor lo indexará en segundos.'
@@ -361,6 +362,17 @@ const SUGG_DOCENTE = [
   { icon: 'file',    text: 'Revisa qué documentos han sido más consultados',           action: 'cursos' },
   { icon: 'target',  text: 'Comparte el código del curso con tus estudiantes',         action: 'cursos' },
 ]
+
+// Cicla entre varias caras del tutor para darle vida al mascota del Dashboard.
+const HERO_FACES = ['happy', 'thinking', 'wink', 'content', 'surprised']
+function useCyclingFace(intervalMs = 2600) {
+  const [i, setI] = useState(0)
+  useEffect(() => {
+    const id = setInterval(() => setI((p) => (p + 1) % HERO_FACES.length), intervalMs)
+    return () => clearInterval(id)
+  }, [intervalMs])
+  return HERO_FACES[i]
+}
 
 function useGreeting() {
   const d = new Date()

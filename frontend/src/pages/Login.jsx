@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext.jsx'
+import TutorBlob from '../components/ui/TutorBlob.jsx'
 
 export default function Login() {
   const { firebaseUser, profile, needsOnboarding, loginWithGoogle } = useAuth()
@@ -25,7 +26,6 @@ export default function Login() {
     setLoading(true)
     try {
       await loginWithGoogle()
-      // No navegamos aquí: el efecto de arriba lo hará cuando el contexto refleje la sesión.
     } catch (e) {
       setError(e.message)
       setLoading(false)
@@ -57,24 +57,15 @@ export default function Login() {
         </div>
 
         <div style={s.brandBody}>
-          <div className="t-eyebrow" style={{ color: 'rgba(255,255,255,.7)', marginBottom: 14 }}>
-            Tu compañero de estudio
-          </div>
+          <RotatingWord />
           <h1 style={s.brandH1}>
-            Pregúntale lo que sea sobre{' '}
+            Resuelve tus dudas con el material de{' '}
             <em style={{ fontStyle: 'italic', fontWeight: 500 }}>tu</em> curso.
           </h1>
           <p style={s.brandLead}>
-            Respuestas con citas verificables del material que tus docentes ya
-            subieron. Quizzes que se ajustan a lo que estás aprendiendo. Sin
-            alucinaciones.
+            Respuestas fundamentadas y citadas, quizzes alineados a lo que ves en
+            clase. Sin alucinaciones, solo fuentes reales.
           </p>
-
-          <div style={s.stats}>
-            <Stat n="14" label="cursos" />
-            <Stat n="2.3k" label="preguntas resueltas" />
-            <Stat n="96%" label="con cita" />
-          </div>
         </div>
       </div>
 
@@ -136,6 +127,27 @@ export default function Login() {
       </div>
 
       <style>{`
+        @keyframes rotate-word-in {
+          from { opacity: 0; transform: translateY(12px); filter: blur(3px); }
+          to   { opacity: 1; transform: none;            filter: blur(0); }
+        }
+        .rotating-word {
+          display: inline-block;
+          animation: rotate-word-in .5s cubic-bezier(.2, .7, .2, 1) both;
+        }
+        .speech-bubble::before {
+          content: '';
+          position: absolute;
+          left: -8px;
+          top: 50%;
+          transform: translateY(-50%);
+          border-width: 8px 9px 8px 0;
+          border-style: solid;
+          border-color: transparent white transparent transparent;
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .rotating-word { animation: none; }
+        }
         @media (max-width: 880px) {
           .login-grid { grid-template-columns: 1fr !important; }
           .login-grid > .login-brand { display: none; }
@@ -145,11 +157,24 @@ export default function Login() {
   )
 }
 
-function Stat({ n, label }) {
+const ROTATING_WORDS = ['Pregunta.', 'Verifica.', 'Aprende.']
+
+function RotatingWord() {
+  const [i, setI] = useState(0)
+  useEffect(() => {
+    const id = setInterval(() => setI((p) => (p + 1) % ROTATING_WORDS.length), 1900)
+    return () => clearInterval(id)
+  }, [])
   return (
-    <div>
-      <div style={{ fontFamily: 'var(--font-display)', fontSize: 26, color: 'white' }}>{n}</div>
-      <div style={{ fontSize: 13, color: 'rgba(255,255,255,.78)' }}>{label}</div>
+    <div style={s.speakRow} aria-label="Tu tutor dice: Pregunta. Verifica. Aprende.">
+      <TutorBlob size={56} tone="mint" />
+      <div className="speech-bubble" style={s.bubble}>
+        <span style={s.bubbleWord}>
+          <span key={i} className="rotating-word" aria-hidden="true">
+            {ROTATING_WORDS[i]}
+          </span>
+        </span>
+      </div>
     </div>
   )
 }
@@ -217,6 +242,30 @@ const s = {
     marginTop: 4,
   },
   brandBody: { marginTop: 'auto', position: 'relative', maxWidth: 460, zIndex: 1 },
+  speakRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 14,
+    marginBottom: 24,
+  },
+  bubble: {
+    position: 'relative',
+    background: 'white',
+    borderRadius: 18,
+    padding: '12px 20px',
+    boxShadow: '0 10px 28px rgba(0,0,0,.18)',
+  },
+  bubbleWord: {
+    display: 'inline-block',
+    minWidth: '4.7em',
+    textAlign: 'left',
+    fontFamily: 'var(--font-display)',
+    fontWeight: 600,
+    fontSize: 'clamp(18px, 2vw, 24px)',
+    lineHeight: 1.1,
+    letterSpacing: '.01em',
+    color: 'var(--ink-900)',
+  },
   brandH1: {
     color: 'white',
     fontSize: 'clamp(34px, 4.2vw, 52px)',
@@ -227,11 +276,6 @@ const s = {
     color: 'rgba(255,255,255,.82)',
     fontSize: 17,
     lineHeight: 1.5,
-  },
-  stats: {
-    display: 'flex',
-    gap: 24,
-    marginTop: 32,
   },
   signWrap: {
     padding: 48,
