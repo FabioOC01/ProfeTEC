@@ -42,11 +42,11 @@ Verificar: `curl http://localhost:8080/health`
 ```bash
 cd frontend
 npm install
-cp .env.example .env
+cp .env.example .env.local    # rellenar con la config Web de Firebase
 npm run dev
 ```
 
-Abrir `http://localhost:5173`.
+Abrir `http://localhost:5174`.
 
 ## Stack declarado (tesis)
 
@@ -77,6 +77,22 @@ Abrir `http://localhost:5173`.
   los estudiantes resuelven y reciben corrección con explicaciones.
 - Feedback 👍/👎 por respuesta + analítica docente (mensajes, conversaciones, documentos,
   feedback, mensajes por modo, intentos, promedio de aciertos de quizzes y backend RAG activo).
+
+## Documentación
+
+| Documento | Contenido |
+|---|---|
+| [`docs/sprints.md`](docs/sprints.md) | Planificación y avance por sprint. |
+| [`docs/arquitectura-rag.md`](docs/arquitectura-rag.md) | Diseño del pipeline RAG (ingesta, embeddings, recuperación). |
+| [`docs/bpmn-proceso.md`](docs/bpmn-proceso.md) | Diagrama del proceso de extremo a extremo (alumno / docente / sistema). |
+| [`docs/etapas-mejora.md`](docs/etapas-mejora.md) | Etapas de mejora del proyecto. |
+| [`docs/deploy.md`](docs/deploy.md) | Guía de despliegue en Cloud Run. |
+| [`backend/README.md`](backend/README.md) · [`frontend/README.md`](frontend/README.md) | Detalle de cada componente. |
+
+## CI
+
+GitHub Actions ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) ejecuta en cada push/PR a
+`main` y `develop`: tests del backend (`pytest`) y lint + build del frontend.
 
 ## Licencia
 
