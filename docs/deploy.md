@@ -26,7 +26,8 @@ gcloud services enable \
   aiplatform.googleapis.com \
   firebase.googleapis.com \
   identitytoolkit.googleapis.com \
-  storage.googleapis.com
+  storage.googleapis.com \
+  bigquery.googleapis.com
 
 # Repositorio Artifact Registry (una sola vez)
 gcloud artifacts repositories create profetec \
@@ -36,6 +37,31 @@ gcloud artifacts repositories create profetec \
 
 ## 2. Desplegar backend
 
+Si se usara BigQuery Vector Search, crear primero el dataset, tabla e indice:
+
+```bash
+bq --location=US mk --dataset $PROJECT_ID:profetec_rag
+
+bq query --use_legacy_sql=false "
+CREATE TABLE IF NOT EXISTS \`$PROJECT_ID.profetec_rag.chunks\` (
+  chunk_id STRING NOT NULL,
+  curso_id STRING NOT NULL,
+  documento_id STRING NOT NULL,
+  nombre_doc STRING,
+  texto STRING,
+  pagina INT64,
+  posicion INT64,
+  embedding ARRAY<FLOAT64>,
+  created_at TIMESTAMP
+)
+CLUSTER BY curso_id, documento_id"
+
+bq query --use_legacy_sql=false "
+CREATE VECTOR INDEX IF NOT EXISTS idx_chunks_embedding
+ON \`$PROJECT_ID.profetec_rag.chunks\`(embedding)
+OPTIONS(distance_type = 'COSINE', index_type = 'IVF')"
+```
+
 ```bash
 cd backend
 
@@ -43,7 +69,7 @@ gcloud run deploy profetec-backend \
   --source . \
   --region $REGION \
   --allow-unauthenticated \
-  --set-env-vars APP_ENV=production,CORS_ORIGINS=https://profetec-frontend-XXX.run.app
+  --set-env-vars APP_ENV=production,CORS_ORIGINS=https://profetec-frontend-XXX.run.app,RAG_BACKEND=bigquery_vector,BIGQUERY_DATASET=profetec_rag,BIGQUERY_CHUNKS_TABLE=chunks,BIGQUERY_LOCATION=US
 ```
 
 Cloud Run devolverá una URL tipo `https://profetec-backend-xxxxx-uc.a.run.app`. Probar:

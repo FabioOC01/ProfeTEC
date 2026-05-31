@@ -7,7 +7,7 @@ from tests.conftest import DOCENTE_CLAIMS, _make_doc, _make_missing_doc
 CURSO_ID = "curso-test-001"
 CURSO_DATA = {
     "nombre": "Algoritmos y Estructuras de Datos",
-    "descripcion": "Curso de quinto ciclo.",
+    "descripcion": "Curso de Sexto Ciclo.",
     "docente_id": DOCENTE_CLAIMS["uid"],
     "docente_nombre": DOCENTE_CLAIMS["name"],
     "codigo": "ABC123",
@@ -73,6 +73,79 @@ class TestListarCursos:
         assert response.status_code == 200
         cursos = response.json()
         assert isinstance(cursos, list)
+
+    def test_estudiante_lista_solo_cursos_matriculados(self, db_mock):
+        """RF-05: estudiante ve solo cursos donde tiene matricula."""
+        from app.main import app
+        from app.core.auth import get_current_user
+        from app.core.firestore_client import get_db
+        from fastapi.testclient import TestClient
+
+        estudiante_claims = {
+            "uid": "uid-est",
+            "email": "est@tecsup.edu.pe",
+            "name": "Est",
+        }
+        usuario_doc = _make_doc("uid-est", {"email": "est@tecsup.edu.pe", "nombre": "Est", "rol": "estudiante"})
+        matricula_doc = _make_doc("mat1", {"curso_id": CURSO_ID, "usuario_id": "uid-est"})
+        curso_doc = _make_doc(CURSO_ID, CURSO_DATA)
+
+        def _collection(name):
+            col = MagicMock()
+            if name == "usuarios":
+                col.document.return_value.get.return_value = usuario_doc
+            elif name == "matriculas":
+                col.where.return_value.stream.return_value = [matricula_doc]
+            elif name == "cursos":
+                col.document.return_value.get.return_value = curso_doc
+            return col
+
+        db_mock.collection.side_effect = _collection
+        app.dependency_overrides[get_current_user] = lambda: estudiante_claims
+        app.dependency_overrides[get_db] = lambda: db_mock
+        with TestClient(app) as c:
+            response = c.get("/cursos")
+        app.dependency_overrides.clear()
+
+        assert response.status_code == 200
+        assert response.json()[0]["id"] == CURSO_ID
+
+
+class TestInscripcion:
+    def test_estudiante_se_matricula_por_codigo(self, db_mock):
+        """RF-05: estudiante puede unirse usando el codigo del curso."""
+        from app.main import app
+        from app.core.auth import get_current_user
+        from app.core.firestore_client import get_db
+        from fastapi.testclient import TestClient
+
+        estudiante_claims = {
+            "uid": "uid-est",
+            "email": "est@tecsup.edu.pe",
+            "name": "Est",
+        }
+        usuario_doc = _make_doc("uid-est", {"email": "est@tecsup.edu.pe", "nombre": "Est", "rol": "estudiante"})
+        curso_doc = _make_doc(CURSO_ID, CURSO_DATA)
+
+        def _collection(name):
+            col = MagicMock()
+            if name == "usuarios":
+                col.document.return_value.get.return_value = usuario_doc
+            elif name == "cursos":
+                col.where.return_value.where.return_value.stream.return_value = [curso_doc]
+            elif name == "matriculas":
+                col.document.return_value.set.return_value = None
+            return col
+
+        db_mock.collection.side_effect = _collection
+        app.dependency_overrides[get_current_user] = lambda: estudiante_claims
+        app.dependency_overrides[get_db] = lambda: db_mock
+        with TestClient(app) as c:
+            response = c.post("/cursos/inscribir", json={"codigo": "abc123"})
+        app.dependency_overrides.clear()
+
+        assert response.status_code == 200
+        assert response.json()["codigo"] == "ABC123"
 
 
 class TestEditarCurso:

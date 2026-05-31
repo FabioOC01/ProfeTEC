@@ -3,37 +3,140 @@ Generación de respuestas con Gemini Flash (RF-13..RF-17).
 Import lazy para que los tests corran sin google-cloud-aiplatform instalado.
 Usa credenciales explícitas del service account.
 """
+import json
+import logging
 import os
+import re
 
 from app.config import settings
 
-_model = None
+logger = logging.getLogger(__name__)
+
+_models = {}
 MODEL_ID = "gemini-2.5-flash"
 
 SYSTEM_PROMPT = (
-    "Eres ProfeTEC.IA, un asistente tutor virtual del Instituto TECSUP. "
-    "Tu función principal es ayudar a los estudiantes a comprender el material de sus cursos.\n\n"
-    "CÓMO RESPONDER SEGÚN EL TIPO DE PREGUNTA:\n\n"
-    "A) SALUDOS Y PREGUNTAS SOBRE TI (ej: 'hola', '¿quién eres?', '¿qué puedes hacer?'):\n"
-    "   Responde de forma amigable y breve presentándote como ProfeTEC.IA, tutor virtual "
-    "de TECSUP. Explica que puedes ayudar con dudas sobre el material del curso. "
-    "No necesitas citar fuentes para este tipo de respuestas.\n\n"
-    "B) PREGUNTAS ACADÉMICAS SOBRE EL CONTENIDO DEL CURSO:\n"
-    "   1. Responde ÚNICAMENTE con información del contexto proporcionado.\n"
-    "   2. Si la información no está en el contexto, di: "
+    "Eres ProfeTEC.IA, tutor virtual del Instituto TECSUP. Ayudas a estudiantes "
+    "a comprender el material de sus cursos.\n\n"
+    "REGLAS DE FORMATO (críticas):\n"
+    "- NO incluyas saludos ni introducciones cuando la pregunta es académica. "
+    "Empieza directamente con la respuesta.\n"
+    "- Responde SIEMPRE en español, con tono claro y didáctico.\n"
+    "- Usa listas o pasos cuando ayuden a la comprensión.\n\n"
+    "TIPOS DE PREGUNTA:\n\n"
+    "A) SALUDOS o preguntas sobre ti ('hola', '¿quién eres?'):\n"
+    "   Una sola oración: preséntate como ProfeTEC.IA y di que ayudas con dudas "
+    "del material del curso. Sin citas.\n\n"
+    "B) PREGUNTAS ACADÉMICAS sobre el curso:\n"
+    "   1. Responde ÚNICAMENTE con información del contexto entregado.\n"
+    "   2. Sin saludo. Empieza por la respuesta.\n"
+    "   3. Si el contexto NO cubre la pregunta, di literalmente: "
     "'Esta información no se encuentra en el material del curso disponible.'\n"
-    "   3. Cita la fuente al final de cada idea relevante con el formato: "
-    "[📄 {nombre_documento}, pág. {pagina}]\n"
-    "   4. No inventes información ni uses conocimiento externo al contexto.\n\n"
-    "REGLAS GENERALES:\n"
-    "- Responde siempre en español con tono didáctico y amigable.\n"
-    "- Sé conciso pero completo. Usa listas o pasos cuando facilite la comprensión."
+    "   4. Cita la fuente con: [📄 {nombre_documento}, pág. {pagina}]\n"
+    "   5. No uses conocimiento externo al contexto."
+)
+
+SYSTEM_PROMPT_DIRECTO = SYSTEM_PROMPT
+
+SYSTEM_PROMPT_SOCRATICO = (
+    "Eres ProfeTEC.IA en modo socrático, tutor virtual del Instituto TECSUP. "
+    "Tu meta es guiar al estudiante con preguntas y pistas para que construya la "
+    "respuesta por sí mismo usando el material del curso.\n\n"
+    "REGLAS DE FORMATO (críticas):\n"
+    "- Responde SIEMPRE en español, con tono claro, paciente y pedagógico.\n"
+    "- En medio de una conversación NO repitas saludos como '¡Hola!'. Solo saluda "
+    "en el primer mensaje del diálogo.\n"
+    "- Usa listas o pasos solo cuando ayuden a la comprensión.\n\n"
+    "TIPOS DE MENSAJE:\n\n"
+    "A) SALUDOS o preguntas sobre ti ('hola', '¿quién eres?'):\n"
+    "   Una sola oración: preséntate como ProfeTEC.IA en modo socrático y di que "
+    "guías con preguntas para que aprendas con el material del curso. Sin citas.\n\n"
+    "B) PREGUNTAS ACADÉMICAS sobre el curso:\n"
+    "   1. NO entregues toda la solución de entrada. Empieza con una pista breve o "
+    "una pregunta guía basada en el contexto.\n"
+    "   2. Avanza en pasos pequeños: orienta, pregunta y, según lo que responda el "
+    "estudiante, ajusta el nivel de la siguiente pista.\n"
+    "   3. Usa máximo 2-3 preguntas guía por turno para no abrumar.\n"
+    "   4. Toma en cuenta lo que el estudiante ya respondió en los turnos previos: "
+    "no repitas preguntas ya contestadas y reconoce sus aciertos antes de seguir.\n"
+    "   5. Si el estudiante ya razonó lo esencial, pide explícitamente la respuesta, "
+    "o lleva varios intentos sin avanzar, DEJA de preguntar y dale una síntesis "
+    "clara con la respuesta. No frustres al estudiante insistiendo con preguntas.\n"
+    "   6. Usa ÚNICAMENTE información del contexto entregado.\n"
+    "   7. Si el contexto no cubre la pregunta, di literalmente: "
+    "'Esta información no se encuentra en el material del curso disponible.'\n"
+    "   8. Cita la fuente SOLO cuando afirmas contenido del material o das la "
+    "síntesis/respuesta final, con: [📄 {nombre_documento}, pág. {pagina}]. "
+    "NO agregues citas cuando tu turno es solo una pregunta guía o una pista sin "
+    "afirmar contenido.\n"
+    "   9. No uses conocimiento externo al contexto."
 )
 
 
-def _get_model():
-    global _model
-    if _model is None:
+# ── Detección de rendición ────────────────────────────────────────────────────
+
+_RENDICION = frozenset({
+    "no lo sé", "no sé", "no se", "no lo se", "no sé nada", "no sé nada de esto",
+    "ayúdame", "ayudame", "ayuda", "dame la respuesta", "dime la respuesta",
+    "me rindo", "me rindo ya", "rendido", "me doy por vencido",
+    "no puedo", "no pude", "no lo entiendo", "no entiendo nada",
+    "dímelo tú", "dimelo tu", "dime tú", "dime tu",
+    "ya dime", "ya dímelo", "solo dime", "simplemente dime",
+    "no tengo idea", "sin idea", "no tengo ni idea",
+})
+
+# Palabras sueltas que, si aparecen como mensaje casi entero, también son rendición.
+_RENDICION_PALABRAS = frozenset({
+    "ayuda", "ayúdame", "ayudame", "rendido", "dímelo", "dimelo",
+})
+
+
+def es_rendicion(pregunta: str) -> bool:
+    """True si el estudiante está pidiendo la respuesta directamente."""
+    texto = pregunta.lower().strip().rstrip("!?.¿¡")
+    if texto in _RENDICION_PALABRAS:
+        return True
+    return any(frase in texto for frase in _RENDICION)
+
+
+# ── Reescritura selectiva ─────────────────────────────────────────────────────
+
+_VAGAS = frozenset({
+    "eso", "esto", "aquello", "eso mismo", "lo mismo", "lo anterior",
+    "lo que dijiste", "lo que mencionaste", "lo que explicaste",
+    "no lo sé", "no sé", "no se", "no lo se",
+    "ayúdame", "ayudame", "más", "mas", "más información",
+    "explica", "explícame", "explicame",
+    "dime", "dímelo", "dimelo",
+    "¿cómo?", "como", "¿por qué?", "por que", "¿y?",
+    "no entiendo", "no lo entiendo",
+    "¿y eso?", "¿y eso qué?", "¿qué?",
+    "¿qué más?", "que mas", "¿y qué más?",
+    "continúa", "continua", "sigue",
+})
+
+
+def _necesita_reescritura(pregunta: str) -> bool:
+    """True si el mensaje es corto o ambiguo y necesita contextualizarse con historial."""
+    palabras = pregunta.strip().split()
+    if len(palabras) <= 5:
+        return True
+    texto = pregunta.lower()
+    return any(v in texto for v in _VAGAS)
+
+
+# ── Grounding / verificación de cita ─────────────────────────────────────────
+
+def _tiene_cita(texto: str) -> bool:
+    """True si la respuesta contiene al menos una cita de fuente del material."""
+    return "[📄" in texto
+
+
+def _get_model(modo: str = "directo"):
+    """Devuelve (y cachea) un GenerativeModel con el system_instruction."""
+    global _models
+    modo_resuelto = "socratico" if modo == "socratico" else "directo"
+    if modo_resuelto not in _models:
         import vertexai
         from vertexai.generative_models import GenerativeModel
 
@@ -53,24 +156,130 @@ def _get_model():
             )
 
         vertexai.init(project=project, location=location, credentials=credentials)
-        _model = GenerativeModel(MODEL_ID, system_instruction=SYSTEM_PROMPT)
-    return _model
+        system_prompt = (
+            SYSTEM_PROMPT_SOCRATICO
+            if modo_resuelto == "socratico"
+            else SYSTEM_PROMPT_DIRECTO
+        )
+        _models[modo_resuelto] = GenerativeModel(MODEL_ID, system_instruction=system_prompt)
+    return _models[modo_resuelto]
 
 
-# Configuración de generación — controla longitud y creatividad
+# Configuración de generación — controla longitud y creatividad.
+# Nota: Gemini 2.5 Flash consume parte del presupuesto en "thinking tokens"
+# internos antes de emitir texto visible. Dejamos un margen amplio.
 GENERATION_CONFIG = {
-    "max_output_tokens": 512,   # ~350-400 palabras máximo
+    "max_output_tokens": 4096,
     "temperature": 0.3,          # bajo = más factual, menos creativo
     "top_p": 0.9,
 }
 
+# Tope absoluto del modelo cuando reintentamos por truncamiento.
+MAX_OUTPUT_TOKENS_LIMITE = 8192
 
-def generar_respuesta(pregunta: str, chunks: list[dict]) -> str:
+
+def _finish_reason_str(response) -> str:
+    """Devuelve el motivo de finalización del primer candidate en string."""
+    cands = getattr(response, "candidates", None) or []
+    if not cands:
+        return ""
+    fr = getattr(cands[0], "finish_reason", None)
+    if fr is None:
+        return ""
+    return getattr(fr, "name", str(fr))
+
+
+def _safe_text(response) -> str:
+    """Extrae el texto de la respuesta de Vertex sin levantar excepciones cuando
+    el modelo no devuelve candidates (por safety, MAX_TOKENS, etc.).
+    """
+    try:
+        return response.text or ""
+    except Exception:
+        pass
+
+    parts: list[str] = []
+    for cand in getattr(response, "candidates", None) or []:
+        content = getattr(cand, "content", None)
+        if not content:
+            continue
+        for part in getattr(content, "parts", None) or []:
+            text = getattr(part, "text", None)
+            if text:
+                parts.append(text)
+    return "".join(parts)
+
+
+def _formatear_historial(historial: list[dict] | None) -> str:
+    """Convierte los turnos previos de la conversación en un bloque de texto que
+    se inyecta en el prompt. Da memoria al tutor (clave para el modo socrático).
+    `historial` es una lista ordenada cronológicamente de dicts con las claves
+    'pregunta' y 'respuesta'.
+    """
+    if not historial:
+        return ""
+    lineas: list[str] = []
+    for turno in historial:
+        pregunta = (turno.get("pregunta") or "").strip()
+        respuesta = (turno.get("respuesta") or "").strip()
+        if pregunta:
+            lineas.append(f"Estudiante: {pregunta}")
+        if respuesta:
+            lineas.append(f"Tutor: {respuesta}")
+    if not lineas:
+        return ""
+    return (
+        "Conversación previa (del turno más antiguo al más reciente):\n"
+        + "\n".join(lineas)
+        + "\n\n"
+    )
+
+
+def _extraer_respuesta_json(raw: str) -> str:
+    """Extrae el campo 'respuesta' del JSON devuelto por el modelo.
+    Tolera fences ```json y texto adicional alrededor del JSON.
+    """
+    if not raw:
+        return ""
+    txt = raw.strip()
+    fence = re.match(r"^```(?:json)?\s*([\s\S]*?)\s*```\s*$", txt)
+    if fence:
+        txt = fence.group(1).strip()
+    if not txt.startswith("{"):
+        idx = txt.find("{")
+        if idx >= 0:
+            txt = txt[idx:]
+    if "}" in txt:
+        ultimo = txt.rfind("}")
+        txt = txt[: ultimo + 1]
+    try:
+        data = json.loads(txt)
+        if isinstance(data, dict):
+            valor = data.get("respuesta")
+            if isinstance(valor, str) and valor.strip():
+                return valor.strip()
+    except (json.JSONDecodeError, ValueError):
+        pass
+    return ""
+
+
+def generar_respuesta(
+    pregunta: str,
+    chunks: list[dict],
+    modo: str = "directo",
+    historial: list[dict] | None = None,
+    rendicion: bool = False,
+    contexto_debil: bool = False,
+) -> str:
     """
     Construye el prompt y genera la respuesta via Gemini.
     Si hay chunks, los usa como contexto (pregunta académica).
     Si no hay chunks, deja que Gemini decida (saludo, presentación, o fuera de alcance).
+    `historial` aporta memoria de los turnos previos de la conversación.
+    `rendicion` indica que el estudiante se rindió — en modo socrático se fuerza síntesis.
+    `contexto_debil` indica baja relevancia de los chunks — se avisa al modelo.
     """
+    historial_txt = _formatear_historial(historial)
     if chunks:
         partes_contexto = []
         for i, chunk in enumerate(chunks, 1):
@@ -80,23 +289,267 @@ def generar_respuesta(pregunta: str, chunks: list[dict]) -> str:
             )
         contexto = "\n\n---\n\n".join(partes_contexto)
 
+        instrucciones_extra = ""
+        if rendicion and modo == "socratico":
+            instrucciones_extra = (
+                "\n\nINSTRUCCIÓN ESPECIAL: El estudiante acaba de rendirse o pedir la "
+                "respuesta directamente. Aplica la regla #5: deja de hacer preguntas y "
+                "da una síntesis clara, completa y bien explicada de la respuesta "
+                "correcta, citando las fuentes del material con el formato indicado."
+            )
+        if contexto_debil:
+            instrucciones_extra += (
+                "\n\nAVISO: Los fragmentos recuperados tienen relevancia moderada. "
+                "Si el contexto no cubre bien la pregunta, indícalo explícitamente "
+                "en lugar de inferir o completar con conocimiento externo."
+            )
+
         prompt = (
             f"Contexto del material del curso:\n\n"
             f"{contexto}\n\n"
             f"---\n\n"
-            f"Pregunta del estudiante: {pregunta}\n\n"
-            f"Responde basándote únicamente en el contexto anterior, "
-            f"citando las fuentes con el formato indicado."
+            f"{historial_txt}"
+            f"Pregunta actual del estudiante: {pregunta}\n\n"
+            f"Responde basándote únicamente en el contexto anterior, respetando el "
+            f"modo pedagogico solicitado ({modo}) y citando las fuentes con el "
+            f"formato indicado.{instrucciones_extra}"
         )
     else:
-        # Sin contexto: el modelo decide si es saludo, presentación o pregunta fuera de alcance
         prompt = (
-            f"Mensaje del estudiante: {pregunta}\n\n"
+            f"{historial_txt}"
+            f"Mensaje actual del estudiante: {pregunta}\n\n"
             f"No hay contexto del material del curso que coincida con esta pregunta. "
-            f"Si es un saludo o una pregunta sobre ti, responde amigablemente siguiendo las reglas. "
-            f"Si es una pregunta académica, indica que la información no está en el material disponible."
+            f"Si es un saludo o una pregunta sobre ti, responde amigablemente siguiendo "
+            f"las reglas. Si es una pregunta académica, indica que la información no "
+            f"está en el material disponible."
         )
 
-    model = _get_model()
-    response = model.generate_content(prompt, generation_config=GENERATION_CONFIG)
-    return response.text
+    # Forzar salida JSON estructurada {"respuesta": "..."}. Esto reduce el
+    # "thinking" que Gemini 2.5 Flash gasta antes de emitir texto y evita
+    # que las respuestas lleguen truncadas.
+    prompt_json = prompt + (
+        "\n\nIMPORTANTE: responde como JSON válido con la forma exacta "
+        '{"respuesta": "TU RESPUESTA AQUÍ"}. Nada antes ni después del JSON.'
+    )
+
+    model = _get_model(modo)
+    config = dict(GENERATION_CONFIG)
+    config["response_mime_type"] = "application/json"
+
+    response = model.generate_content(prompt_json, generation_config=config)
+    raw = _safe_text(response).strip()
+    finish = _finish_reason_str(response)
+
+    texto = _extraer_respuesta_json(raw)
+
+    # Si la primera respuesta vino vacía o se quedó sin tokens, reintentar con
+    # el tope absoluto del modelo y en modo texto libre.
+    if not texto or finish == "MAX_TOKENS":
+        logger.warning(
+            "Respuesta inicial inutilizable (finish=%s, len=%d). Reintentando.",
+            finish, len(raw),
+        )
+        retry_cfg = dict(GENERATION_CONFIG)
+        retry_cfg["max_output_tokens"] = MAX_OUTPUT_TOKENS_LIMITE
+        response2 = model.generate_content(prompt, generation_config=retry_cfg)
+        raw2 = _safe_text(response2).strip()
+        finish2 = _finish_reason_str(response2)
+        if raw2 and finish2 != "MAX_TOKENS":
+            return raw2
+        if raw2 and len(raw2) > 40:
+            return raw2
+
+    if texto:
+        # Grounding check: si había chunks y la respuesta no cita ninguno,
+        # reintentamos con instrucción explícita de citar. Solo cuando el
+        # contexto es sólido (no débil) para evitar forzar citas inventadas.
+        if chunks and not contexto_debil and not _tiene_cita(texto):
+            logger.info("Grounding check: respuesta sin cita — reintentando con instrucción.")
+            prompt_grounding = prompt + (
+                "\n\nIMPORTANTE: Tu respuesta DEBE incluir al menos una cita con el "
+                "formato [📄 {nombre_documento}, pág. {pagina}]. Reformula incluyéndola."
+            )
+            prompt_grounding_json = prompt_grounding + (
+                "\n\nIMPORTANTE: responde como JSON válido con la forma exacta "
+                '{"respuesta": "TU RESPUESTA AQUÍ"}. Nada antes ni después del JSON.'
+            )
+            r_g = model.generate_content(prompt_grounding_json, generation_config=config)
+            texto_g = _extraer_respuesta_json(_safe_text(r_g).strip())
+            if texto_g and _tiene_cita(texto_g):
+                return texto_g
+        return texto
+
+    logger.warning("No se pudo obtener respuesta utilizable tras reintento.")
+    return (
+        "No pude generar una respuesta completa en este intento. "
+        "Intenta reformular tu consulta de forma más específica."
+    )
+
+
+def _build_stream_prompt(
+    pregunta: str,
+    chunks: list[dict],
+    modo: str = "directo",
+    historial: list[dict] | None = None,
+    rendicion: bool = False,
+    contexto_debil: bool = False,
+) -> str:
+    historial_txt = _formatear_historial(historial)
+    if chunks:
+        partes_contexto = []
+        for i, chunk in enumerate(chunks, 1):
+            partes_contexto.append(
+                f"[Fragmento {i} - {chunk['nombre_doc']}, pag. {chunk['pagina']}]\n"
+                f"{chunk['texto']}"
+            )
+        contexto = "\n\n---\n\n".join(partes_contexto)
+
+        instrucciones_extra = ""
+        if rendicion and modo == "socratico":
+            instrucciones_extra = (
+                "\n\nINSTRUCCIÓN ESPECIAL: El estudiante acaba de rendirse o pedir la "
+                "respuesta directamente. Aplica la regla #5: deja de hacer preguntas y "
+                "da una síntesis clara, completa y bien explicada de la respuesta "
+                "correcta, citando las fuentes del material con el formato indicado."
+            )
+        if contexto_debil:
+            instrucciones_extra += (
+                "\n\nAVISO: Los fragmentos recuperados tienen relevancia moderada. "
+                "Si el contexto no cubre bien la pregunta, indícalo explícitamente "
+                "en lugar de inferir o completar con conocimiento externo."
+            )
+
+        return (
+            f"Contexto del material del curso:\n\n"
+            f"{contexto}\n\n"
+            f"---\n\n"
+            f"{historial_txt}"
+            f"Pregunta actual del estudiante: {pregunta}\n\n"
+            f"Responde basandote unicamente en el contexto anterior, respetando el "
+            f"modo pedagogico solicitado ({modo}) y citando las fuentes con el "
+            f"formato indicado.{instrucciones_extra}"
+        )
+
+    return (
+        f"{historial_txt}"
+        f"Mensaje actual del estudiante: {pregunta}\n\n"
+        f"No hay contexto del material del curso que coincida con esta pregunta. "
+        f"Si es un saludo o una pregunta sobre ti, responde amigablemente siguiendo "
+        f"las reglas. Si es una pregunta academica, indica que la informacion no "
+        f"esta en el material disponible."
+    )
+
+
+def generar_respuesta_stream(
+    pregunta: str,
+    chunks: list[dict],
+    modo: str = "directo",
+    historial: list[dict] | None = None,
+    rendicion: bool = False,
+    contexto_debil: bool = False,
+):
+    """Genera la respuesta con streaming real de Gemini.
+
+    Si el stream termina vacío o truncado (MAX_TOKENS), cae al endpoint síncrono
+    y emite el resultado completo como un único delta. Garantiza que el cliente
+    siempre reciba algo útil.
+    """
+    prompt = _build_stream_prompt(pregunta, chunks, modo, historial, rendicion, contexto_debil)
+    model = _get_model(modo)
+    config = dict(GENERATION_CONFIG)
+
+    partes: list[str] = []
+    final_response = None
+    response_stream = model.generate_content(prompt, generation_config=config, stream=True)
+    for response in response_stream:
+        text = _safe_text(response)
+        if text:
+            partes.append(text)
+            yield text
+        final_response = response
+
+    total = "".join(partes).strip()
+    finish = _finish_reason_str(final_response) if final_response else ""
+
+    if not total or finish == "MAX_TOKENS":
+        logger.warning(
+            "Stream inutilizable (finish=%s, len=%d). Reintentando en modo síncrono.",
+            finish, len(total),
+        )
+        retry_cfg = dict(GENERATION_CONFIG)
+        retry_cfg["max_output_tokens"] = MAX_OUTPUT_TOKENS_LIMITE
+        response2 = model.generate_content(prompt, generation_config=retry_cfg)
+        raw2 = _safe_text(response2).strip()
+        if raw2 and raw2 != total:
+            yield raw2
+
+
+def reescribir_consulta(pregunta: str, historial: list[dict] | None = None) -> str:
+    """Convierte un mensaje de seguimiento en una consulta de búsqueda autónoma
+    usando el historial de la conversación.
+
+    Es la pieza clave del RAG conversacional: mensajes cortos como 'no lo sé',
+    'ayúdame', 'explícame más' o '¿y eso?' no tienen contenido semántico propio,
+    así que embeberlos tal cual recupera chunks irrelevantes. Aquí los resolvemos
+    contra el último turno del tutor para que la búsqueda traiga el material correcto.
+
+    Si no hay historial no hay nada que resolver: devuelve la pregunta tal cual.
+    Ante cualquier fallo del modelo, cae a la pregunta original (nunca rompe el chat).
+    """
+    if not historial:
+        return pregunta
+
+    # Mensajes largos y específicos ya son consultas autónomas: no gastar la llamada.
+    if not _necesita_reescritura(pregunta):
+        return pregunta
+
+    historial_txt = _formatear_historial(historial)
+    prompt = (
+        f"{historial_txt}"
+        f"Mensaje de seguimiento del estudiante: {pregunta}\n\n"
+        "Reescribe el mensaje de seguimiento como UNA sola consulta de búsqueda "
+        "autónoma y específica, en español, que capture la intención real del "
+        "estudiante según la conversación previa. Resuelve referencias como 'eso' "
+        "o 'lo anterior', y cuando el estudiante se rinde ('no lo sé', 'ayúdame') "
+        "toma el tema que el tutor estaba tratando en su último turno. "
+        "Devuelve SOLO la consulta, sin comillas ni explicaciones."
+    )
+
+    try:
+        reescrita = generar_texto(prompt, temperatura=0.0, max_tokens=256).strip()
+    except Exception as exc:  # noqa: BLE001 — el chat nunca debe caerse por esto
+        logger.warning("Reescritura de consulta falló; uso la original. error=%s", exc)
+        return pregunta
+
+    # Salvaguardas: respuestas vacías o desbordadas vuelven a la pregunta original.
+    if not reescrita or len(reescrita) > 300:
+        return pregunta
+    return reescrita
+
+
+def generar_texto(prompt: str, temperatura: float = 0.4, max_tokens: int = 4096) -> str:
+    """Generación libre, sin RAG. Se usa para tareas como crear cuestionarios."""
+    model = _get_model("directo")
+    config = {
+        "max_output_tokens": max_tokens,
+        "temperature": temperatura,
+        "top_p": 0.9,
+    }
+    response = model.generate_content(prompt, generation_config=config)
+    return _safe_text(response)
+
+
+def generar_json(prompt: str, temperatura: float = 0.4, max_tokens: int = 4096) -> str:
+    """Genera una respuesta forzada a JSON usando response_mime_type de Vertex.
+    Devuelve el texto crudo (string JSON). Si el modelo no produce texto,
+    retorna cadena vacía y deja que el caller maneje el caso.
+    """
+    model = _get_model("directo")
+    config = {
+        "max_output_tokens": max_tokens,
+        "temperature": temperatura,
+        "top_p": 0.9,
+        "response_mime_type": "application/json",
+    }
+    response = model.generate_content(prompt, generation_config=config)
+    return _safe_text(response)

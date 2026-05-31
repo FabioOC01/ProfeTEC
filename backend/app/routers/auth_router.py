@@ -1,9 +1,11 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from firebase_admin import firestore
 
+from app.config import settings
+from app.core.access import docente_autorizado, validate_institutional_email
 from app.core.auth import get_current_user
 from app.core.firestore_client import get_db
-from app.models.usuario import SetRolRequest, UsuarioResponse
+from app.models.usuario import SetRolRequest
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -28,6 +30,10 @@ def me(
     Retorna `needs_onboarding: true` cuando el rol aún no está asignado (RF-02).
     """
     uid: str = claims["uid"]
+    email = validate_institutional_email(
+        claims.get("email"),
+        settings.allowed_email_domains_list,
+    )
     ref = db.collection("usuarios").document(uid)
     doc = ref.get()
 
@@ -36,7 +42,7 @@ def me(
         return {"usuario": usuario, "needs_onboarding": usuario.get("rol") is None}
 
     nuevo = {
-        "email": claims.get("email", ""),
+        "email": email,
         "nombre": claims.get("name") or claims.get("email", "").split("@")[0],
         "foto_url": claims.get("picture"),
         "rol": None,
@@ -67,16 +73,40 @@ def set_rol(
     doc = ref.get()
 
     if not doc.exists:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuario no encontrado.")
+        email = validate_institutional_email(
+            claims.get("email"),
+            settings.allowed_email_domains_list,
+        )
+        data = {
+            "email": email,
+            "nombre": claims.get("name") or email.split("@")[0],
+            "foto_url": claims.get("picture"),
+            "rol": None,
+            "created_at": firestore.SERVER_TIMESTAMP,
+        }
+        crear_usuario = True
+    else:
+        data = doc.to_dict()
+        crear_usuario = False
 
-    data = doc.to_dict()
     if data.get("rol") is not None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="El rol ya fue asignado y no se puede modificar desde este endpoint.",
         )
 
-    ref.update({"rol": body.rol})
+    email = data.get("email") or claims.get("email")
+    if body.rol == "docente" and not docente_autorizado(email, db):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Tu correo no esta autorizado para registrarse como docente.",
+        )
+
+    if crear_usuario:
+        ref.set({**data, "rol": body.rol})
+    else:
+        ref.update({"rol": body.rol})
+
     data["rol"] = body.rol
     data["uid"] = uid
     data.pop("created_at", None)

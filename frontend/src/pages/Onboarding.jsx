@@ -1,19 +1,23 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext.jsx'
+import TutorBlob from '../components/ui/TutorBlob.jsx'
+import Icon from '../components/ui/Icon.jsx'
 
 const OPCIONES = [
   {
-    rol: 'docente',
-    titulo: 'Soy docente',
-    desc: '',
-    icon: '',
-  },
-  {
     rol: 'estudiante',
     titulo: 'Soy estudiante',
-    desc: '',
-    icon: '',
+    desc: 'Quiero conversar con el tutor sobre el material de mis cursos.',
+    icon: 'user',
+    color: 'mint',
+  },
+  {
+    rol: 'docente',
+    titulo: 'Soy docente',
+    desc: 'Quiero subir material y ver cómo lo usan mis estudiantes.',
+    icon: 'book',
+    color: 'lav',
   },
 ]
 
@@ -46,34 +50,60 @@ export default function Onboarding() {
     }
   }
 
+  const firstName = profile?.nombre?.split(' ')[0]
+
   return (
     <main style={s.main}>
-      <div style={s.card}>
-        <h2 style={s.title}>Bienvenido{profile?.nombre ? `, ${profile.nombre.split(' ')[0]}` : ''}.</h2>
-        <p style={s.sub}>¿Cómo usarás ProfeTEC.IA?</p>
+      <div className="card card-elev" style={s.card}>
+        <div style={s.head}>
+          <TutorBlob size={56} />
+          <div>
+            <div className="t-eyebrow" style={{ marginBottom: 6 }}>Bienvenida ·  ProfeTEC.IA</div>
+            <h2 style={{ margin: 0 }}>
+              Hola{firstName ? <>, <em style={{ fontStyle: 'italic', fontWeight: 500, color: 'var(--amber-700)' }}>{firstName}</em></> : ''}.
+            </h2>
+            <p className="t-muted" style={{ marginTop: 6 }}>¿Cómo vas a usar el tutor?</p>
+          </div>
+        </div>
 
         <div style={s.opciones}>
-          {OPCIONES.map((o) => (
-            <button
-              key={o.rol}
-              style={{ ...s.opcion, ...(selected === o.rol ? s.opcionActiva : {}) }}
-              onClick={() => setSelected(o.rol)}
-            >
-              <span style={s.icon}>{o.icon}</span>
-              <strong>{o.titulo}</strong>
-              <span style={s.desc}>{o.desc}</span>
-            </button>
-          ))}
+          {OPCIONES.map((o) => {
+            const active = selected === o.rol
+            return (
+              <button
+                key={o.rol}
+                type="button"
+                onClick={() => setSelected(o.rol)}
+                style={{
+                  ...s.opcion,
+                  borderColor: active ? 'var(--amber-500)' : 'var(--ink-100)',
+                  background: active ? 'var(--amber-100)' : 'var(--surface)',
+                }}
+              >
+                <span
+                  className={`chip chip-${o.color}`}
+                  style={{ alignSelf: 'flex-start', padding: '6px 10px' }}
+                >
+                  <Icon name={o.icon} size={14} />
+                  {o.titulo}
+                </span>
+                <p style={s.opcionDesc}>{o.desc}</p>
+              </button>
+            )
+          })}
         </div>
 
         {error && <p style={s.error}>{error}</p>}
 
         <button
+          type="button"
           onClick={handleConfirm}
           disabled={!selected || loading}
-          style={{ ...s.btn, opacity: !selected || loading ? 0.5 : 1 }}
+          className="btn btn-primary"
+          style={{ width: '100%', justifyContent: 'center', marginTop: 8 }}
         >
-          {loading ? 'Guardando…' : 'Continuar →'}
+          {loading ? 'Guardando…' : 'Continuar'}
+          <Icon name="arrow" size={15} />
         </button>
       </div>
     </main>
@@ -81,28 +111,35 @@ export default function Onboarding() {
 }
 
 const s = {
-  main: { minHeight: '100vh', display: 'grid', placeItems: 'center', padding: '1rem' },
-  card: {
-    width: '100%', maxWidth: 480, background: 'var(--card)',
-    border: '1px solid var(--border)', borderRadius: 12, padding: '2.5rem 2rem',
-    boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
+  main: { minHeight: '100vh', display: 'grid', placeItems: 'center', padding: '32px 16px' },
+  card: { width: '100%', maxWidth: 540, padding: '36px 32px' },
+  head: { display: 'flex', alignItems: 'center', gap: 16, marginBottom: 28 },
+  opciones: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+    gap: 12,
+    marginBottom: 20,
   },
-  title: { margin: 0, fontSize: '1.5rem' },
-  sub: { color: 'var(--text-dim)', marginTop: '0.5rem', marginBottom: '2rem' },
-  opciones: { display: 'flex', gap: '1rem', marginBottom: '1.5rem' },
   opcion: {
-    flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center',
-    gap: '0.5rem', padding: '1.25rem 1rem', border: '2px solid var(--border)',
-    borderRadius: 10, cursor: 'pointer', background: 'transparent',
-    color: 'var(--text)', transition: 'border-color 0.15s, background 0.15s',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 10,
+    padding: '16px 16px 18px',
+    border: '1px solid var(--ink-100)',
+    borderRadius: 'var(--r-lg)',
+    background: 'var(--surface)',
+    textAlign: 'left',
+    cursor: 'pointer',
+    transition: 'border-color .15s ease, background .15s ease',
   },
-  opcionActiva: { borderColor: '#2f81f7', background: 'rgba(47,129,247,0.1)' },
-  icon: { fontSize: '2rem' },
-  desc: { fontSize: '0.8rem', color: 'var(--text-dim)', textAlign: 'center' },
-  btn: {
-    width: '100%', padding: '0.75rem', fontSize: '1rem',
-    background: '#2f81f7', color: '#fff', border: 'none',
-    borderRadius: 8, cursor: 'pointer', fontWeight: 600,
+  opcionDesc: { fontSize: 13, color: 'var(--ink-500)', margin: 0 },
+  error: {
+    color: 'var(--danger)',
+    fontSize: 13,
+    marginBottom: 12,
+    background: 'rgba(214,90,71,.07)',
+    border: '1px solid rgba(214,90,71,.25)',
+    borderRadius: 'var(--r-sm)',
+    padding: '8px 12px',
   },
-  error: { color: 'var(--error)', fontSize: '0.875rem', marginBottom: '1rem' },
 }

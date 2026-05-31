@@ -20,6 +20,18 @@ class CursoUpdate(BaseModel):
     activo: Optional[bool] = None
 
 
+class CursoInscripcionRequest(BaseModel):
+    codigo: str
+
+    @field_validator("codigo")
+    @classmethod
+    def codigo_no_vacio(cls, v: str) -> str:
+        codigo = v.strip().upper()
+        if not codigo:
+            raise ValueError("El codigo del curso no puede estar vacio.")
+        return codigo
+
+
 class CursoResponse(BaseModel):
     id: str
     nombre: str

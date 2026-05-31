@@ -2,9 +2,14 @@
 Gestión de conocimiento — upload, indexación y eliminación de documentos (RF-07..RF-12).
 Pipeline: upload → extracción → chunking → embeddings → Firestore.
 """
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+import logging
+from pathlib import PurePath
+from uuid import uuid4
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from firebase_admin import firestore
 
+from app.core.access import verificar_acceso_curso
 from app.core.auth import get_current_user
 from app.core.chunker import chunk_pages
 from app.core.extractor import DocType, extract_pages
@@ -14,13 +19,20 @@ from app.core.vertex import embed_texts
 from app.models.documento import DocumentoResponse
 
 router = APIRouter(tags=["documentos"])
+logger = logging.getLogger(__name__)
 
 TIPOS_PERMITIDOS: dict[str, DocType] = {
     "application/pdf": "pdf",
     "application/vnd.openxmlformats-officedocument.presentationml.presentation": "pptx",
     "text/plain": "txt",
 }
+EXTENSIONES_PERMITIDAS: dict[DocType, set[str]] = {
+    "pdf": {".pdf"},
+    "pptx": {".pptx"},
+    "txt": {".txt"},
+}
 MAX_SIZE_MB = 20
+FIRESTORE_BATCH_LIMIT = 450
 
 
 def _verificar_docente(uid: str, db) -> dict:
@@ -43,6 +55,125 @@ def _verificar_curso(curso_id: str, uid: str, db) -> dict:
     return data
 
 
+def _nombre_seguro(filename: str | None) -> str:
+    nombre = PurePath(filename or "documento").name.strip() or "documento"
+    return nombre.replace("/", "_").replace("\\", "_")
+
+
+def _texto_seguro(value: str | None) -> str:
+    return (value or "").strip().replace("/", "_").replace("\\", "_")
+
+
+def _validar_extension(nombre: str, doc_type: DocType) -> None:
+    extension = PurePath(nombre).suffix.lower()
+    if extension not in EXTENSIONES_PERMITIDAS[doc_type]:
+        permitidas = ", ".join(sorted(EXTENSIONES_PERMITIDAS[doc_type]))
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"La extension del archivo no coincide con el tipo. Usa: {permitidas}.",
+        )
+
+
+def _storage_destination(curso_id: str, nombre: str) -> str:
+    return f"cursos/{curso_id}/{uuid4().hex}_{nombre}"
+
+
+def _commit_chunks_en_batches(
+    db,
+    chunks: list[dict],
+    vectores: list[list[float]],
+    doc_id: str,
+    curso_id: str,
+    nombre: str,
+    semana: int | None = None,
+    referencia: str | None = None,
+) -> list[str]:
+    batch = db.batch()
+    operaciones = 0
+    chunk_ids: list[str] = []
+
+    for chunk, vector in zip(chunks, vectores):
+        chunk_ref = db.collection("chunks").document()
+        chunk_ids.append(chunk_ref.id)
+        batch.set(chunk_ref, {
+            "documento_id": doc_id,
+            "curso_id": curso_id,
+            "nombre_doc": nombre,
+            "texto": chunk["texto"],
+            "embedding": vector,
+            "pagina": chunk["pagina"],
+            "posicion": chunk["posicion"],
+            "semana": semana,
+            "referencia": referencia,
+        })
+        operaciones += 1
+
+        if operaciones >= FIRESTORE_BATCH_LIMIT:
+            batch.commit()
+            batch = db.batch()
+            operaciones = 0
+
+    if operaciones:
+        batch.commit()
+
+    return chunk_ids
+
+
+def _insert_chunks_bigquery_best_effort(
+    chunks: list[dict],
+    vectores: list[list[float]],
+    chunk_ids: list[str],
+    doc_id: str,
+    curso_id: str,
+    nombre: str,
+    semana: int | None = None,
+    referencia: str | None = None,
+) -> None:
+    try:
+        from app.core.bigquery_rag import build_chunk_rows, insert_chunk_rows
+
+        rows = build_chunk_rows(
+            chunks,
+            vectores,
+            chunk_ids,
+            doc_id,
+            curso_id,
+            nombre,
+            semana,
+            referencia,
+        )
+        insert_chunk_rows(rows)
+    except Exception as exc:
+        logger.warning("No se pudieron indexar chunks en BigQuery: %s", exc)
+
+
+def _delete_chunks_en_batches(db, doc_id: str) -> None:
+    chunks = db.collection("chunks").where("documento_id", "==", doc_id).stream()
+    batch = db.batch()
+    operaciones = 0
+
+    for chunk in chunks:
+        batch.delete(chunk.reference)
+        operaciones += 1
+
+        if operaciones >= FIRESTORE_BATCH_LIMIT:
+            batch.commit()
+            batch = db.batch()
+            operaciones = 0
+
+    if operaciones:
+        batch.commit()
+
+
+def _delete_chunks_bigquery_best_effort(doc_id: str) -> None:
+    try:
+        from app.core.bigquery_rag import delete_chunks_for_document
+
+        delete_chunks_for_document(doc_id)
+    except Exception as exc:
+        logger.warning("No se pudieron eliminar chunks en BigQuery: %s", exc)
+
+
 @router.post(
     "/cursos/{curso_id}/documentos",
     response_model=DocumentoResponse,
@@ -52,6 +183,9 @@ def _verificar_curso(curso_id: str, uid: str, db) -> dict:
 async def subir_documento(
     curso_id: str,
     archivo: UploadFile = File(...),
+    titulo: str = Form(..., min_length=1, max_length=160),
+    semana: int = Form(..., ge=1, le=30),
+    referencia: str | None = Form(default=None, max_length=300),
     claims: dict = Depends(get_current_user),
     db=Depends(get_db),
 ):
@@ -85,15 +219,17 @@ async def subir_documento(
             detail=f"El archivo supera el límite de {MAX_SIZE_MB} MB.",
         )
 
-    nombre = archivo.filename or "documento"
+    nombre_archivo = _nombre_seguro(archivo.filename)
+    nombre_doc = _texto_seguro(titulo)
+    referencia_doc = _texto_seguro(referencia) or None
+    if not nombre_doc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="El titulo del documento es obligatorio.",
+        )
+    _validar_extension(nombre_archivo, doc_type)
 
     # ── 1. Subir a Cloud Storage ──────────────────────────────────────────────
-    storage_path = upload_file(
-        file_bytes,
-        destination=f"cursos/{curso_id}/{nombre}",
-        content_type=content_type,
-    )
-
     # ── 2. Extraer texto ──────────────────────────────────────────────────────
     pages = extract_pages(file_bytes, doc_type)
     if not pages:
@@ -108,36 +244,70 @@ async def subir_documento(
     # ── 4. Embeddings (Vertex AI) ─────────────────────────────────────────────
     textos = [c["texto"] for c in chunks]
     vectores = embed_texts(textos)
+    if len(vectores) != len(chunks):
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="No se generaron embeddings para todos los chunks.",
+        )
+
+    storage_path = upload_file(
+        file_bytes,
+        destination=_storage_destination(curso_id, nombre_archivo),
+        content_type=content_type,
+    )
 
     # ── 5. Guardar documento en Firestore ─────────────────────────────────────
     doc_data = {
         "curso_id": curso_id,
-        "nombre": nombre,
+        "nombre": nombre_doc,
         "tipo": doc_type,
         "storage_path": storage_path,
         "paginas": len(pages),
         "chunks_count": len(chunks),
         "docente_id": uid,
+        "semana": semana,
+        "referencia": referencia_doc,
         "created_at": firestore.SERVER_TIMESTAMP,
     }
-    _, doc_ref = db.collection("documentos").add(doc_data)
-    doc_id = doc_ref.id
+    doc_ref = None
+    doc_id = None
+    try:
+        _, doc_ref = db.collection("documentos").add(doc_data)
+        doc_id = doc_ref.id
+        chunk_ids = _commit_chunks_en_batches(
+            db,
+            chunks,
+            vectores,
+            doc_id,
+            curso_id,
+            nombre_doc,
+            semana,
+            referencia_doc,
+        )
+        _insert_chunks_bigquery_best_effort(
+            chunks,
+            vectores,
+            chunk_ids,
+            doc_id,
+            curso_id,
+            nombre_doc,
+            semana,
+            referencia_doc,
+        )
+    except Exception:
+        if doc_id:
+            try:
+                _delete_chunks_en_batches(db, doc_id)
+                doc_ref.delete()
+            except Exception:
+                pass
+        try:
+            delete_file(storage_path)
+        except Exception:
+            pass
+        raise
 
     # ── 6. Guardar chunks + embeddings en Firestore ───────────────────────────
-    batch = db.batch()
-    for chunk, vector in zip(chunks, vectores):
-        chunk_ref = db.collection("chunks").document()
-        batch.set(chunk_ref, {
-            "documento_id": doc_id,
-            "curso_id": curso_id,
-            "nombre_doc": nombre,
-            "texto": chunk["texto"],
-            "embedding": vector,
-            "pagina": chunk["pagina"],
-            "posicion": chunk["posicion"],
-        })
-    batch.commit()
-
     return {**doc_data, "id": doc_id}
 
 
@@ -152,10 +322,7 @@ def listar_documentos(
     db=Depends(get_db),
 ):
     uid = claims["uid"]
-    # Cualquier usuario puede listar documentos (lectura); solo docentes pueden subir/eliminar
-    doc = db.collection("cursos").document(curso_id).get()
-    if not doc.exists:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Curso no encontrado.")
+    verificar_acceso_curso(curso_id, uid, db)
 
     docs = (
         db.collection("documentos")
@@ -184,6 +351,7 @@ def eliminar_documento(
 ):
     uid = claims["uid"]
     _verificar_docente(uid, db)
+    _verificar_curso(curso_id, uid, db)
 
     doc_ref = db.collection("documentos").document(doc_id)
     doc = doc_ref.get()
@@ -191,15 +359,14 @@ def eliminar_documento(
         raise HTTPException(status_code=404, detail="Documento no encontrado.")
 
     data = doc.to_dict()
+    if data.get("curso_id") != curso_id:
+        raise HTTPException(status_code=404, detail="Documento no encontrado en este curso.")
+
     if data["docente_id"] != uid:
         raise HTTPException(status_code=403, detail="No tienes permiso para eliminar este documento.")
 
-    # Eliminar chunks
-    chunks = db.collection("chunks").where("documento_id", "==", doc_id).stream()
-    batch = db.batch()
-    for c in chunks:
-        batch.delete(c.reference)
-    batch.commit()
+    _delete_chunks_en_batches(db, doc_id)
+    _delete_chunks_bigquery_best_effort(doc_id)
 
     # Eliminar archivo en Cloud Storage
     try:

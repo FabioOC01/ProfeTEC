@@ -10,6 +10,9 @@ import Onboarding from './pages/Onboarding.jsx'
 import Dashboard from './pages/Dashboard.jsx'
 import CursosList from './pages/cursos/CursosList.jsx'
 import CursoDetalle from './pages/cursos/CursoDetalle.jsx'
+import Chat from './pages/chat/Chat.jsx'
+import QuizzesPage from './pages/quizzes/QuizzesPage.jsx'
+import QuizDetallePage from './pages/quizzes/QuizDetallePage.jsx'
 
 import './index.css'
 
@@ -34,6 +37,18 @@ createRoot(document.getElementById('root')).render(
 
           <Route path="/cursos/:cursoId" element={
             <RequireAuth><CursoDetalle /></RequireAuth>
+          } />
+
+          <Route path="/chat/:cursoId" element={
+            <RequireAuth><Chat /></RequireAuth>
+          } />
+
+          <Route path="/cursos/:cursoId/quizzes" element={
+            <RequireAuth><QuizzesPage /></RequireAuth>
+          } />
+
+          <Route path="/cursos/:cursoId/quizzes/:quizId" element={
+            <RequireAuth><QuizDetallePage /></RequireAuth>
           } />
 
           {/* Fallback */}

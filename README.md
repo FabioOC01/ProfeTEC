@@ -56,9 +56,27 @@ Abrir `http://localhost:5173`.
 | Backend | Python 3.11, FastAPI, Pydantic v2 |
 | Base de datos | Firestore |
 | Autenticación | Firebase Auth (Google) |
-| LLM | Gemini vía Vertex AI |
+| LLM | Gemini 2.5 Flash vía Vertex AI |
+| Embeddings | text-embedding-004 (768 dims) |
 | Almacenamiento | Cloud Storage |
+| Búsqueda vectorial | Firestore scan local o BigQuery Vector Search |
 | Despliegue | Cloud Run |
+
+## Funcionalidades implementadas
+
+- Login con Google + onboarding por rol (docente / estudiante).
+- Restricción por dominio institucional configurable (`ALLOWED_EMAIL_DOMAINS`).
+- CRUD de cursos + matrícula por código.
+- Carga de material académico (PDF, PPTX, TXT) + pipeline RAG.
+- Chat con citas explícitas al material del docente.
+- **Dos modos pedagógicos en el chat**: directo (respuestas explicativas) y socrático
+  (preguntas guía que llevan al estudiante a la respuesta).
+- **RAG configurable**: `firestore_scan` para local/demo y `bigquery_vector` para
+  recuperar chunks mediante BigQuery `VECTOR_SEARCH`.
+- **Quizzes generados automáticamente** a partir del material del curso: el docente crea,
+  los estudiantes resuelven y reciben corrección con explicaciones.
+- Feedback 👍/👎 por respuesta + analítica docente (mensajes, conversaciones, documentos,
+  feedback, mensajes por modo, intentos, promedio de aciertos de quizzes y backend RAG activo).
 
 ## Licencia
 

@@ -1,16 +1,18 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext.jsx'
+import Icon from './ui/Icon.jsx'
 
-/**
- * Barra superior compartida entre páginas autenticadas.
- * Props:
- *   - breadcrumb: nodo opcional a mostrar en el centro (ej: "Mis cursos › Algoritmos")
- */
 export default function Navbar({ breadcrumb }) {
   const navigate = useNavigate()
+  const location = useLocation()
   const { profile, firebaseUser, logout } = useAuth()
   const [menuAbierto, setMenuAbierto] = useState(false)
+
+  const displayName = profile?.nombre || firebaseUser?.displayName || 'Usuario'
+  const firstName = displayName.split(' ')[0]
+  const inicial = displayName.charAt(0).toUpperCase()
+  const isDocente = profile?.rol === 'docente'
 
   const handleLogout = async () => {
     setMenuAbierto(false)
@@ -18,147 +20,281 @@ export default function Navbar({ breadcrumb }) {
     navigate('/login', { replace: true })
   }
 
-  const displayName = profile?.nombre || firebaseUser?.displayName || 'Usuario'
-  const inicial = displayName.charAt(0).toUpperCase()
+  const items = [
+    { id: 'dashboard', label: 'Inicio',   icon: 'home', path: '/dashboard' },
+    { id: 'cursos',    label: 'Cursos',   icon: 'book', path: '/cursos' },
+    { id: 'chat',      label: 'Tutor',    icon: 'chat', path: '/cursos', match: '/chat' },
+  ]
+
+  function isActive(it) {
+    if (it.match && location.pathname.startsWith(it.match)) return true
+    if (it.id === 'dashboard') return location.pathname === '/dashboard'
+    if (it.id === 'cursos')
+      return location.pathname === '/cursos' || location.pathname.startsWith('/cursos/')
+    return location.pathname.startsWith(it.path)
+  }
 
   return (
-    <nav style={s.nav}>
+    <header style={s.nav}>
       <div style={s.container}>
         {/* Logo */}
         <button
+          type="button"
           onClick={() => navigate('/dashboard')}
           style={s.logoBtn}
-          title="Ir al dashboard"
+          title="Ir al inicio"
         >
-          <span style={s.logoMark}>🎓</span>
-          <span style={s.logoText}>
-            ProfeTEC<span style={s.logoAccent}>.IA</span>
-          </span>
+          <img src="/logo.png" alt="ProfeTEC" style={s.logoImg} />
+          <div style={s.logoText}>
+            <span style={s.logoBrand}>ProfeTEC</span>
+          </div>
         </button>
 
-        {/* Breadcrumb opcional */}
-        {breadcrumb && <div style={s.breadcrumb}>{breadcrumb}</div>}
+        {/* Nav items */}
+        <nav style={s.navItems} className="nav-items">
+          {items.map((it) => {
+            const active = isActive(it)
+            return (
+              <button
+                key={it.id}
+                type="button"
+                onClick={() => navigate(it.path)}
+                style={{
+                  ...s.navBtn,
+                  background: active ? 'var(--ink-900)' : 'transparent',
+                  color: active ? 'var(--paper)' : 'var(--ink-700)',
+                }}
+              >
+                <Icon name={it.icon} size={16} />
+                <span className="nav-label">{it.label}</span>
+              </button>
+            )
+          })}
+        </nav>
 
-        {/* Usuario */}
-        <div style={s.userZona}>
-          <button
-            onClick={() => setMenuAbierto((v) => !v)}
-            style={s.userBtn}
-            title={displayName}
-          >
-            {firebaseUser?.photoURL ? (
-              <img src={firebaseUser.photoURL} alt="" style={s.avatar} />
-            ) : (
-              <span style={s.avatarFallback}>{inicial}</span>
-            )}
-            <span style={s.userNombre}>{displayName.split(' ')[0]}</span>
-            {profile?.rol && (
-              <span style={{ ...s.rolBadge, ...(profile.rol === 'docente' ? s.rolDocente : s.rolEstudiante) }}>
-                {profile.rol === 'docente' ? '👨‍🏫' : '👨‍🎓'} {profile.rol}
-              </span>
-            )}
-            <span style={s.chevron}>{menuAbierto ? '▲' : '▼'}</span>
-          </button>
+        <div style={{ flex: 1, display: 'flex', justifyContent: 'center', minWidth: 0 }}>
+          {breadcrumb && <div style={s.breadcrumb}>{breadcrumb}</div>}
+        </div>
 
-          {menuAbierto && (
-            <>
-              <div style={s.menuOverlay} onClick={() => setMenuAbierto(false)} />
-              <div style={s.menu}>
-                <div style={s.menuHeader}>
-                  <strong>{displayName}</strong>
-                  <small style={s.menuEmail}>{firebaseUser?.email}</small>
-                </div>
-                <button
-                  onClick={() => { navigate('/dashboard'); setMenuAbierto(false) }}
-                  style={s.menuItem}
-                >
-                  🏠 Dashboard
-                </button>
-                <button
-                  onClick={() => { navigate('/cursos'); setMenuAbierto(false) }}
-                  style={s.menuItem}
-                >
-                  📚 Cursos
-                </button>
-                <div style={s.menuDivider} />
-                <button onClick={handleLogout} style={{ ...s.menuItem, color: 'var(--error)' }}>
-                  ⎋ Cerrar sesión
-                </button>
-              </div>
-            </>
+        {/* Right */}
+        <div style={s.right}>
+          {profile?.rol && (
+            <span
+              className={isDocente ? 'chip chip-lav' : 'chip chip-mint'}
+              style={s.rolChip}
+            >
+              {isDocente ? 'Docente' : 'Estudiante'}
+            </span>
           )}
+
+          <div style={s.userZona}>
+            <button
+              type="button"
+              onClick={() => setMenuAbierto((v) => !v)}
+              style={s.userBtn}
+              title={displayName}
+            >
+              {firebaseUser?.photoURL ? (
+                <img src={firebaseUser.photoURL} alt="" style={s.avatar} />
+              ) : (
+                <span style={s.avatarFallback}>{inicial}</span>
+              )}
+              <span style={s.userNombre}>{firstName}</span>
+            </button>
+
+            {menuAbierto && (
+              <>
+                <div style={s.menuOverlay} onClick={() => setMenuAbierto(false)} />
+                <div style={s.menu}>
+                  <div style={s.menuHeader}>
+                    <strong style={{ fontSize: 14 }}>{displayName}</strong>
+                    <small style={s.menuEmail}>{firebaseUser?.email}</small>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigate('/dashboard')
+                      setMenuAbierto(false)
+                    }}
+                    style={s.menuItem}
+                  >
+                    <Icon name="home" size={15} /> Inicio
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigate('/cursos')
+                      setMenuAbierto(false)
+                    }}
+                    style={s.menuItem}
+                  >
+                    <Icon name="book" size={15} /> Cursos
+                  </button>
+                  <div style={s.menuDivider} />
+                  <button
+                    type="button"
+                    onClick={handleLogout}
+                    style={{ ...s.menuItem, color: 'var(--danger)' }}
+                  >
+                    <Icon name="logout" size={15} /> Cerrar sesión
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
         </div>
       </div>
-    </nav>
+
+      <style>{`
+        @media (max-width: 760px) {
+          .nav-items .nav-label { display: none; }
+        }
+      `}</style>
+    </header>
   )
 }
 
 const s = {
   nav: {
-    position: 'sticky', top: 0, zIndex: 50,
-    background: 'rgba(13, 17, 23, 0.92)',
-    backdropFilter: 'blur(10px)',
-    WebkitBackdropFilter: 'blur(10px)',
-    borderBottom: '1px solid var(--border)',
+    position: 'sticky',
+    top: 0,
+    zIndex: 40,
+    height: 'var(--nav-h)',
+    background: 'rgba(250, 246, 240, .82)',
+    backdropFilter: 'blur(14px)',
+    WebkitBackdropFilter: 'blur(14px)',
+    borderBottom: '1px solid var(--ink-100)',
   },
   container: {
-    maxWidth: 1100, margin: '0 auto', padding: '0.75rem 1.5rem',
-    display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem',
+    maxWidth: 'var(--maxw)',
+    height: '100%',
+    margin: '0 auto',
+    padding: '0 24px',
+    display: 'flex',
+    alignItems: 'center',
+    gap: 16,
   },
   logoBtn: {
-    display: 'flex', alignItems: 'center', gap: '0.5rem',
-    background: 'transparent', border: 'none', padding: 0, cursor: 'pointer',
+    display: 'flex',
+    alignItems: 'center',
+    gap: 10,
+    background: 'transparent',
+    border: 'none',
+    padding: 0,
+    cursor: 'pointer',
   },
-  logoMark: { fontSize: '1.4rem' },
-  logoText: { fontWeight: 700, fontSize: '1.05rem', letterSpacing: '-0.01em', color: 'var(--text)' },
-  logoAccent: { color: 'var(--accent)' },
-  breadcrumb: {
-    flex: 1, textAlign: 'center', fontSize: '0.85rem', color: 'var(--text-dim)',
-    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+  logoImg: {
+    width: 34,
+    height: 34,
+    objectFit: 'contain',
+    display: 'block',
   },
+  logoText: { display: 'flex', flexDirection: 'column', lineHeight: 1, alignItems: 'flex-start' },
+  logoBrand: {
+    fontFamily: 'var(--font-display)',
+    fontWeight: 600,
+    fontSize: 17,
+    letterSpacing: '-0.02em',
+    color: 'var(--ink-900)',
+  },
+  logoSub: {
+    fontFamily: 'var(--font-mono)',
+    fontSize: 9,
+    color: 'var(--ink-500)',
+    letterSpacing: '.15em',
+    marginTop: 2,
+  },
+  navItems: { display: 'flex', gap: 4, marginLeft: 16 },
+  navBtn: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 7,
+    padding: '8px 14px',
+    borderRadius: 'var(--r-pill)',
+    border: 'none',
+    fontSize: 14,
+    fontWeight: 500,
+    transition: 'background .15s ease, color .15s ease',
+  },
+  right: { display: 'flex', alignItems: 'center', gap: 10 },
+  rolChip: { textTransform: 'capitalize' },
   userZona: { position: 'relative' },
   userBtn: {
-    display: 'flex', alignItems: 'center', gap: '0.5rem',
-    background: 'var(--card)', border: '1px solid var(--border)',
-    borderRadius: 99, padding: '0.3rem 0.5rem 0.3rem 0.3rem',
-    cursor: 'pointer', fontSize: '0.85rem', color: 'var(--text)',
+    display: 'flex',
+    alignItems: 'center',
+    gap: 8,
+    padding: '5px 12px 5px 5px',
+    background: 'var(--surface)',
+    border: '1px solid var(--ink-100)',
+    borderRadius: 'var(--r-pill)',
+    cursor: 'pointer',
+    color: 'var(--ink-900)',
+    fontSize: 13,
   },
   avatar: { width: 28, height: 28, borderRadius: '50%' },
   avatarFallback: {
-    width: 28, height: 28, borderRadius: '50%',
-    background: 'linear-gradient(135deg, #2f81f7, #7c3aed)', color: '#fff',
-    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-    fontWeight: 600, fontSize: '0.85rem',
+    width: 28,
+    height: 28,
+    borderRadius: '50%',
+    background: 'linear-gradient(135deg, var(--lav-500), var(--amber-500))',
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    color: '#fff',
+    fontWeight: 600,
+    fontSize: 13,
   },
   userNombre: { fontWeight: 500 },
-  rolBadge: {
-    fontSize: '0.7rem', padding: '0.15rem 0.5rem', borderRadius: 99,
-    textTransform: 'capitalize', fontWeight: 500,
-  },
-  rolDocente: { background: 'rgba(47, 129, 247, 0.18)', color: '#58a6ff' },
-  rolEstudiante: { background: 'rgba(63, 185, 80, 0.18)', color: '#56d364' },
-  chevron: { fontSize: '0.6rem', color: 'var(--text-dim)' },
   menuOverlay: {
-    position: 'fixed', inset: 0, background: 'transparent', zIndex: 40,
+    position: 'fixed',
+    inset: 0,
+    background: 'transparent',
+    zIndex: 40,
   },
   menu: {
-    position: 'absolute', top: 'calc(100% + 0.5rem)', right: 0,
-    background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 10,
-    minWidth: 220, padding: '0.4rem', zIndex: 50,
-    boxShadow: '0 12px 40px rgba(0, 0, 0, 0.6)',
+    position: 'absolute',
+    top: 'calc(100% + 8px)',
+    right: 0,
+    background: 'var(--surface)',
+    border: '1px solid var(--ink-100)',
+    borderRadius: 'var(--r-md)',
+    minWidth: 240,
+    padding: 6,
+    zIndex: 50,
+    boxShadow: 'var(--sh-pop)',
   },
   menuHeader: {
-    padding: '0.6rem 0.75rem', display: 'flex', flexDirection: 'column', gap: '0.15rem',
-    borderBottom: '1px solid var(--border)', marginBottom: '0.3rem',
+    padding: '10px 12px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 2,
+    borderBottom: '1px solid var(--ink-100)',
+    marginBottom: 4,
   },
-  menuEmail: { color: 'var(--text-dim)', fontSize: '0.72rem' },
+  menuEmail: { color: 'var(--ink-500)', fontSize: 12 },
   menuItem: {
-    display: 'block', width: '100%', textAlign: 'left',
-    background: 'transparent', border: 'none', color: 'var(--text)',
-    padding: '0.55rem 0.75rem', borderRadius: 6,
-    cursor: 'pointer', fontSize: '0.875rem',
+    display: 'flex',
+    alignItems: 'center',
+    gap: 8,
+    width: '100%',
+    textAlign: 'left',
+    background: 'transparent',
+    border: 'none',
+    color: 'var(--ink-900)',
+    padding: '9px 12px',
+    borderRadius: 'var(--r-sm)',
+    cursor: 'pointer',
+    fontSize: 14,
   },
-  menuDivider: {
-    height: 1, background: 'var(--border)', margin: '0.3rem 0',
+  menuDivider: { height: 1, background: 'var(--ink-100)', margin: '4px 0' },
+  breadcrumb: {
+    fontFamily: 'var(--font-mono)',
+    fontSize: 12,
+    color: 'var(--ink-500)',
+    letterSpacing: '.04em',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+    maxWidth: '100%',
   },
 }

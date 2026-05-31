@@ -25,6 +25,32 @@ class TestAuthMe:
         assert response.status_code == 200
         assert response.json()["needs_onboarding"] is False
 
+    def test_rechaza_correo_no_institucional(self, db_mock, monkeypatch):
+        """Seguridad: solo se aceptan correos del dominio institucional.
+
+        Fuerza el dominio permitido a tecsup.edu.pe para que la prueba sea
+        independiente de la configuración local del .env (que puede tener "*").
+        """
+        from app.main import app
+        from app.core.auth import get_current_user
+        from app.core.firestore_client import get_db
+        from app.config import settings
+        from fastapi.testclient import TestClient
+
+        monkeypatch.setattr(settings, "allowed_email_domains", "tecsup.edu.pe")
+
+        app.dependency_overrides[get_current_user] = lambda: {
+            "uid": "externo",
+            "email": "persona@example.com",
+            "name": "Persona Externa",
+        }
+        app.dependency_overrides[get_db] = lambda: db_mock
+        with TestClient(app) as c:
+            response = c.post("/auth/me")
+        app.dependency_overrides.clear()
+
+        assert response.status_code == 403
+
 
 class TestSetRol:
     def test_asignar_rol_docente(self, client_sin_rol, db_mock):
@@ -39,6 +65,69 @@ class TestSetRol:
         body = response.json()
         assert body["usuario"]["rol"] == "docente"
         assert body["needs_onboarding"] is False
+
+    def test_asignar_rol_crea_usuario_si_no_existe(self):
+        """Robustez: si /auth/me no creo el doc, el onboarding lo crea al elegir rol."""
+        from app.main import app
+        from app.core.auth import get_current_user
+        from app.core.firestore_client import get_db
+        from fastapi.testclient import TestClient
+
+        db = MagicMock()
+        ref = MagicMock()
+        ref.get.return_value = _make_missing_doc()
+        db.collection.return_value.document.return_value = ref
+
+        claims = {
+            "uid": "uid-estudiante-nuevo",
+            "email": "estudiante@tecsup.edu.pe",
+            "name": "Estudiante Nuevo",
+            "picture": None,
+        }
+        app.dependency_overrides[get_current_user] = lambda: claims
+        app.dependency_overrides[get_db] = lambda: db
+        with TestClient(app) as c:
+            response = c.patch("/auth/me/rol", json={"rol": "estudiante"})
+        app.dependency_overrides.clear()
+
+        assert response.status_code == 200
+        assert response.json()["usuario"]["rol"] == "estudiante"
+        ref.set.assert_called_once()
+
+    def test_docente_debe_estar_autorizado(self):
+        """Seguridad: no cualquier usuario institucional puede ser docente."""
+        from app.main import app
+        from app.core.auth import get_current_user
+        from app.core.firestore_client import get_db
+        from fastapi.testclient import TestClient
+
+        db = MagicMock()
+        user_doc = _make_doc(DOCENTE_CLAIMS["uid"], {
+            "email": DOCENTE_CLAIMS["email"],
+            "nombre": DOCENTE_CLAIMS["name"],
+            "foto_url": None,
+            "rol": None,
+        })
+        docente_doc = _make_missing_doc()
+
+        def _collection(name):
+            col = MagicMock()
+            doc_ref = MagicMock()
+            if name == "usuarios":
+                doc_ref.get.return_value = user_doc
+            elif name == "docentes_autorizados":
+                doc_ref.get.return_value = docente_doc
+            col.document.return_value = doc_ref
+            return col
+
+        db.collection.side_effect = _collection
+        app.dependency_overrides[get_current_user] = lambda: DOCENTE_CLAIMS
+        app.dependency_overrides[get_db] = lambda: db
+        with TestClient(app) as c:
+            response = c.patch("/auth/me/rol", json={"rol": "docente"})
+        app.dependency_overrides.clear()
+
+        assert response.status_code == 403
 
     def test_rol_invalido_retorna_422(self, client_sin_rol):
         """RF-03 (control): rol fuera de ['docente','estudiante'] falla validación."""

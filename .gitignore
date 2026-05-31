@@ -28,6 +28,7 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
+*.log
 
 # Build de frontend
 frontend/dist/
@@ -41,8 +42,14 @@ frontend/.vite/
 .DS_Store
 Thumbs.db
 
+# Instaladores y binarios locales
+*.exe
+
 # Credenciales GCP (nunca commitear)
 *.json.key
 service-account*.json
 gcp-credentials*.json
 firebase-adminsdk*.json
+
+# Mockups / handoff de diseño (referencia local, no se versiona)
+.design-handoff/

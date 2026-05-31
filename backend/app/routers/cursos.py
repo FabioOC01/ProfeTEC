@@ -5,9 +5,14 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from firebase_admin import firestore
 
+from app.core.access import (
+    get_usuario_o_403,
+    matricula_id,
+    verificar_acceso_curso,
+)
 from app.core.auth import get_current_user
 from app.core.firestore_client import get_db
-from app.models.curso import CursoCreate, CursoResponse, CursoUpdate
+from app.models.curso import CursoCreate, CursoInscripcionRequest, CursoResponse, CursoUpdate
 
 router = APIRouter(prefix="/cursos", tags=["cursos"])
 
@@ -15,13 +20,6 @@ router = APIRouter(prefix="/cursos", tags=["cursos"])
 def _codigo_unico(length: int = 6) -> str:
     chars = string.ascii_uppercase + string.digits
     return "".join(random.choices(chars, k=length))
-
-
-def _get_usuario_o_403(uid: str, db) -> dict:
-    doc = db.collection("usuarios").document(uid).get()
-    if not doc.exists:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Usuario no registrado.")
-    return doc.to_dict()
 
 
 def _doc_to_curso(doc) -> dict:
@@ -39,7 +37,7 @@ def crear_curso(
     db=Depends(get_db),
 ):
     uid = claims["uid"]
-    usuario = _get_usuario_o_403(uid, db)
+    usuario = get_usuario_o_403(uid, db)
 
     if usuario.get("rol") != "docente":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
@@ -69,22 +67,75 @@ def listar_cursos(
 ):
     """
     Docentes: ven solo sus propios cursos.
-    Estudiantes: ven todos los cursos activos (acceso simplificado — sin matrícula por ahora).
+    Estudiantes: ven solo los cursos donde tienen matricula.
     """
     uid = claims["uid"]
-    usuario = _get_usuario_o_403(uid, db)
+    usuario = get_usuario_o_403(uid, db)
     rol = usuario.get("rol")
 
     if rol == "docente":
         query = db.collection("cursos").where("docente_id", "==", uid)
         if activo is not None:
             query = query.where("activo", "==", activo)
+    elif rol == "estudiante":
+        matriculas = (
+            db.collection("matriculas")
+            .where("usuario_id", "==", uid)
+            .stream()
+        )
+        cursos = []
+        for matricula in matriculas:
+            curso_id = (matricula.to_dict() or {}).get("curso_id")
+            if not curso_id:
+                continue
+            curso_doc = db.collection("cursos").document(curso_id).get()
+            if curso_doc.exists:
+                curso_data = _doc_to_curso(curso_doc)
+                if curso_data.get("activo", True):
+                    cursos.append(curso_data)
+        return cursos
     else:
-        # Estudiantes ven todos los cursos activos
-        query = db.collection("cursos").where("activo", "==", True)
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Debes completar el onboarding antes de ver cursos.",
+        )
 
     docs = query.stream()
     return [_doc_to_curso(d) for d in docs]
+
+
+@router.post("/inscribir", response_model=CursoResponse, summary="Matricular estudiante por codigo")
+def inscribir_curso(
+    body: CursoInscripcionRequest,
+    claims: dict = Depends(get_current_user),
+    db=Depends(get_db),
+):
+    uid = claims["uid"]
+    usuario = get_usuario_o_403(uid, db)
+    if usuario.get("rol") != "estudiante":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Solo los estudiantes pueden matricularse por codigo.",
+        )
+
+    cursos = (
+        db.collection("cursos")
+        .where("codigo", "==", body.codigo)
+        .where("activo", "==", True)
+        .stream()
+    )
+    curso_doc = next(iter(cursos), None)
+    if curso_doc is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Codigo de curso no encontrado.")
+
+    curso = _doc_to_curso(curso_doc)
+    db.collection("matriculas").document(matricula_id(curso["id"], uid)).set({
+        "curso_id": curso["id"],
+        "usuario_id": uid,
+        "rol": "estudiante",
+        "created_at": firestore.SERVER_TIMESTAMP,
+    })
+    return curso
 
 
 @router.get("/{curso_id}", response_model=CursoResponse, summary="Detalle de un curso (RF-05)")
@@ -93,15 +144,10 @@ def obtener_curso(
     claims: dict = Depends(get_current_user),
     db=Depends(get_db),
 ):
-    """Cualquier usuario registrado puede ver el detalle de un curso."""
+    """Solo el docente dueno o estudiantes matriculados pueden ver el detalle."""
     uid = claims["uid"]
-    _get_usuario_o_403(uid, db)
-
-    doc = db.collection("cursos").document(curso_id).get()
-    if not doc.exists:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Curso no encontrado.")
-
-    return _doc_to_curso(doc)
+    curso, _usuario = verificar_acceso_curso(curso_id, uid, db)
+    return curso
 
 
 @router.patch("/{curso_id}", response_model=CursoResponse, summary="Editar curso (RF-05)")
@@ -112,7 +158,7 @@ def editar_curso(
     db=Depends(get_db),
 ):
     uid = claims["uid"]
-    _get_usuario_o_403(uid, db)
+    get_usuario_o_403(uid, db)
 
     ref = db.collection("cursos").document(curso_id)
     doc = ref.get()
@@ -140,7 +186,7 @@ def eliminar_curso(
     db=Depends(get_db),
 ):
     uid = claims["uid"]
-    _get_usuario_o_403(uid, db)
+    get_usuario_o_403(uid, db)
 
     ref = db.collection("cursos").document(curso_id)
     doc = ref.get()

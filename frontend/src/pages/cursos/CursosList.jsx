@@ -1,18 +1,29 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { getCursos, createCurso, updateCurso, deleteCurso } from '../../api/cursos.js'
+import {
+  getCursos,
+  createCurso,
+  inscribirCurso,
+  updateCurso,
+  deleteCurso,
+} from '../../api/cursos.js'
 import { useAuth } from '../../context/AuthContext.jsx'
 import Navbar from '../../components/Navbar.jsx'
+import Icon from '../../components/ui/Icon.jsx'
+import SectionHead from '../../components/ui/SectionHead.jsx'
+import CourseCover, { colorForIndex } from '../../components/ui/CourseCover.jsx'
 
 export default function CursosList() {
   const navigate = useNavigate()
   const { profile } = useAuth()
   const isDocente = profile?.rol === 'docente'
+
   const [cursos, setCursos] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [modal, setModal] = useState(null) // null | 'crear' | curso (editar)
   const [form, setForm] = useState({ nombre: '', descripcion: '' })
+  const [codigo, setCodigo] = useState('')
   const [saving, setSaving] = useState(false)
 
   const cargar = async () => {
@@ -27,7 +38,9 @@ export default function CursosList() {
     }
   }
 
-  useEffect(() => { cargar() }, [])
+  useEffect(() => {
+    cargar()
+  }, [])
 
   const abrirCrear = () => {
     setForm({ nombre: '', descripcion: '' })
@@ -69,94 +82,226 @@ export default function CursosList() {
     }
   }
 
+  const inscribir = async () => {
+    const limpio = codigo.trim().toUpperCase()
+    if (!limpio || saving) return
+    setSaving(true)
+    setError(null)
+    try {
+      const curso = await inscribirCurso(limpio)
+      setCursos((prev) => (prev.some((c) => c.id === curso.id) ? prev : [curso, ...prev]))
+      setCodigo('')
+    } catch (e) {
+      setError(e.response?.data?.detail || e.message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
   return (
     <>
       <Navbar breadcrumb="Cursos" />
       <main style={s.main}>
-        <header style={s.header}>
-          <div>
-            <h1 style={s.titulo}>{isDocente ? 'Mis cursos' : 'Cursos disponibles'}</h1>
-            <p style={s.subtitulo}>
-              {isDocente
-                ? 'Administra tus cursos y el material que ProfeTEC.IA usará para responder.'
-                : 'Abre un curso para conversar con el tutor virtual sobre el material.'}
-            </p>
-          </div>
-          {isDocente && (
-            <button onClick={abrirCrear} style={s.btnPrimario}>+ Nuevo curso</button>
-          )}
-        </header>
+        <SectionHead
+          eyebrow={isDocente ? 'Tus cursos' : 'Cursos inscritos'}
+          title={isDocente ? 'Mis cursos' : 'Mis cursos'}
+          action={
+            isDocente && (
+              <button type="button" className="btn btn-primary" onClick={abrirCrear}>
+                <Icon name="plus" size={14} />
+                Nuevo curso
+              </button>
+            )
+          }
+        />
 
-      {error && <p style={s.error}>{error}</p>}
-
-      {loading ? (
-        <p style={s.dim}>Cargando cursos…</p>
-      ) : cursos.length === 0 ? (
-        <div style={s.vacio}>
-          <p>{isDocente ? 'Aún no tienes cursos.' : 'No hay cursos disponibles.'}</p>
-          {isDocente && (
-            <button onClick={abrirCrear} style={s.btnPrimario}>Crear primer curso</button>
-          )}
-        </div>
-      ) : (
-        <div style={s.grid}>
-          {cursos.map((c) => (
-            <div key={c.id} style={s.card}>
-              <div style={s.cardTop}>
-                <strong style={s.cardNombre}>{c.nombre}</strong>
-                <span style={s.codigo}>{c.codigo}</span>
-              </div>
-              {c.descripcion && <p style={s.cardDesc}>{c.descripcion}</p>}
-              <div style={s.cardActions}>
-                <button onClick={() => navigate(`/cursos/${c.id}`)} style={{ ...s.btnSmall, background: '#2f81f7', color: '#fff', border: 'none' }}>
-                  {isDocente ? 'Ver material' : '💬 Chatear'}
-                </button>
-                {isDocente && (
-                  <>
-                    <button onClick={() => abrirEditar(c)} style={s.btnSmall}>Editar</button>
-                    <button onClick={() => eliminar(c)} style={{ ...s.btnSmall, color: 'var(--error)' }}>
-                      Eliminar
-                    </button>
-                  </>
-                )}
-              </div>
+        {!isDocente && (
+          <section className="card" style={s.joinCard}>
+            <div style={{ flex: 1, minWidth: 240 }}>
+              <div className="t-eyebrow" style={{ marginBottom: 6 }}>Unirme a un curso</div>
+              <p className="t-muted" style={{ fontSize: 13 }}>
+                Pídele a tu docente el código del curso (suele ser algo como{' '}
+                <span className="t-mono">TIA-302</span>).
+              </p>
             </div>
-          ))}
-        </div>
-      )}
+            <div style={s.joinRow}>
+              <input
+                className="field-input"
+                style={{ minWidth: 200, flex: 1 }}
+                value={codigo}
+                onChange={(e) => setCodigo(e.target.value.toUpperCase())}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') inscribir()
+                }}
+                placeholder="CÓDIGO DEL CURSO"
+                maxLength={16}
+                aria-label="Código del curso"
+              />
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={inscribir}
+                disabled={!codigo.trim() || saving}
+              >
+                {saving ? 'Uniendo…' : 'Unirme'}
+              </button>
+            </div>
+          </section>
+        )}
+
+        {error && <p style={s.error}>{error}</p>}
+
+        {loading ? (
+          <p className="t-muted">Cargando cursos…</p>
+        ) : cursos.length === 0 ? (
+          <div className="card" style={s.emptyCard}>
+            <p style={{ marginBottom: 14 }}>
+              {isDocente
+                ? 'Aún no tienes cursos. Crea uno para empezar a subir material.'
+                : 'Aún no estás inscrito en ningún curso.'}
+            </p>
+            {isDocente && (
+              <button type="button" className="btn btn-primary" onClick={abrirCrear}>
+                Crear primer curso
+              </button>
+            )}
+          </div>
+        ) : (
+          <div style={s.grid}>
+            {cursos.map((c, i) => (
+              <article key={c.id} className="card" style={s.card}>
+                <CourseCover variant={colorForIndex(i)} size="short" />
+                <div style={{ padding: 18, display: 'flex', flexDirection: 'column', flex: 1 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+                    <span className="t-mono t-tiny" style={{ color: 'var(--ink-500)' }}>
+                      {c.codigo}
+                    </span>
+                  </div>
+                  <h3 style={{ marginBottom: 6, lineHeight: 1.2 }}>{c.nombre}</h3>
+                  {c.descripcion && (
+                    <p
+                      className="t-tiny t-muted"
+                      style={{
+                        marginBottom: 14,
+                        display: '-webkit-box',
+                        WebkitLineClamp: 2,
+                        WebkitBoxOrient: 'vertical',
+                        overflow: 'hidden',
+                      }}
+                    >
+                      {c.descripcion}
+                    </p>
+                  )}
+
+                  <div style={{ flex: 1 }} />
+
+                  <div style={s.cardActions}>
+                    <button
+                      type="button"
+                      className="btn btn-primary"
+                      style={{ padding: '9px 16px', fontSize: 13 }}
+                      onClick={() =>
+                        isDocente
+                          ? navigate(`/cursos/${c.id}`)
+                          : navigate(`/chat/${c.id}`)
+                      }
+                    >
+                      {isDocente ? (
+                        <>
+                          <Icon name="file" size={14} />
+                          Ver material
+                        </>
+                      ) : (
+                        <>
+                          <Icon name="chat" size={14} />
+                          Chatear
+                        </>
+                      )}
+                    </button>
+                    {isDocente && (
+                      <>
+                        <button
+                          type="button"
+                          className="btn btn-ghost"
+                          style={{ padding: '8px 12px', fontSize: 13 }}
+                          onClick={() => abrirEditar(c)}
+                          title="Editar"
+                        >
+                          Editar
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-danger"
+                          style={{ padding: '8px 12px', fontSize: 13 }}
+                          onClick={() => eliminar(c)}
+                          title="Eliminar"
+                        >
+                          <Icon name="trash" size={14} />
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              </article>
+            ))}
+          </div>
+        )}
 
         {modal && (
-          <div style={s.overlay}>
-            <div style={s.modalCard}>
-              <h2 style={s.modalTitulo}>
+          <div style={s.overlay} onClick={() => !saving && setModal(null)}>
+            <div
+              className="card card-elev"
+              style={s.modalCard}
+              onClick={(e) => e.stopPropagation()}
+              role="dialog"
+              aria-modal="true"
+            >
+              <h2 style={{ marginBottom: 18 }}>
                 {modal === 'crear' ? 'Nuevo curso' : 'Editar curso'}
               </h2>
 
-              <label style={s.label}>Nombre *</label>
+              <label className="field-label" htmlFor="curso-nombre">
+                Nombre *
+              </label>
               <input
-                style={s.input}
+                id="curso-nombre"
+                className="field-input"
                 value={form.nombre}
                 onChange={(e) => setForm({ ...form, nombre: e.target.value })}
                 placeholder="Ej: Algoritmos y Estructuras de Datos"
                 autoFocus
+                style={{ marginBottom: 14 }}
               />
 
-              <label style={s.label}>Descripción</label>
+              <label className="field-label" htmlFor="curso-desc">
+                Descripción
+              </label>
               <textarea
-                style={{ ...s.input, minHeight: 80, resize: 'vertical' }}
+                id="curso-desc"
+                className="field-input"
                 value={form.descripcion}
                 onChange={(e) => setForm({ ...form, descripcion: e.target.value })}
                 placeholder="Descripción breve del curso…"
+                rows={3}
+                style={{ resize: 'vertical', minHeight: 90, marginBottom: 12 }}
               />
 
               {error && <p style={s.error}>{error}</p>}
 
               <div style={s.modalActions}>
-                <button onClick={() => setModal(null)} style={s.btnSmall}>Cancelar</button>
                 <button
+                  type="button"
+                  className="btn btn-ghost"
+                  onClick={() => setModal(null)}
+                  disabled={saving}
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-primary"
                   onClick={guardar}
                   disabled={!form.nombre.trim() || saving}
-                  style={{ ...s.btnPrimario, opacity: !form.nombre.trim() || saving ? 0.5 : 1 }}
                 >
                   {saving ? 'Guardando…' : 'Guardar'}
                 </button>
@@ -170,26 +315,54 @@ export default function CursosList() {
 }
 
 const s = {
-  main: { maxWidth: 1100, margin: '0 auto', padding: '2rem 1.5rem' },
-  header: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: '1.5rem', gap: '1rem', flexWrap: 'wrap' },
-  titulo: { margin: 0, fontSize: '1.75rem', fontWeight: 700, letterSpacing: '-0.02em' },
-  subtitulo: { color: 'var(--text-dim)', margin: '0.35rem 0 0', fontSize: '0.9rem', maxWidth: 560 },
-  btnPrimario: { background: '#2f81f7', color: '#fff', border: 'none', borderRadius: 8, padding: '0.5rem 1.25rem', cursor: 'pointer', fontWeight: 600 },
-  error: { color: 'var(--error)', marginBottom: '1rem', fontSize: '0.875rem' },
-  dim: { color: 'var(--text-dim)' },
-  vacio: { textAlign: 'center', paddingTop: '4rem', color: 'var(--text-dim)' },
-  grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: '1rem' },
-  card: { background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 10, padding: '1.25rem' },
-  cardTop: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' },
-  cardNombre: { fontSize: '1rem' },
-  codigo: { fontSize: '0.7rem', background: 'var(--border)', padding: '0.2rem 0.5rem', borderRadius: 4, color: 'var(--text-dim)' },
-  cardDesc: { fontSize: '0.825rem', color: 'var(--text-dim)', margin: '0 0 1rem' },
-  cardActions: { display: 'flex', gap: '0.5rem' },
-  btnSmall: { fontSize: '0.8rem', padding: '0.3rem 0.75rem', borderRadius: 6 },
-  overlay: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'grid', placeItems: 'center', zIndex: 100 },
-  modalCard: { background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 12, padding: '2rem', width: '100%', maxWidth: 460 },
-  modalTitulo: { margin: '0 0 1.5rem', fontSize: '1.25rem' },
-  label: { display: 'block', fontSize: '0.875rem', color: 'var(--text-dim)', marginBottom: '0.35rem' },
-  input: { width: '100%', background: '#0a0d12', border: '1px solid var(--border)', borderRadius: 6, padding: '0.6rem 0.75rem', color: 'var(--text)', fontSize: '0.95rem', marginBottom: '1rem', boxSizing: 'border-box' },
-  modalActions: { display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginTop: '0.5rem' },
+  main: { maxWidth: 'var(--maxw)', margin: '0 auto', padding: '32px 24px 80px' },
+  joinCard: {
+    padding: 18,
+    display: 'flex',
+    alignItems: 'center',
+    gap: 18,
+    flexWrap: 'wrap',
+    marginBottom: 28,
+    background: 'linear-gradient(135deg, var(--mint-100), var(--surface) 80%)',
+  },
+  joinRow: { display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' },
+  error: {
+    color: 'var(--danger)',
+    fontSize: 13,
+    marginBottom: 14,
+    background: 'rgba(214,90,71,.07)',
+    border: '1px solid rgba(214,90,71,.25)',
+    borderRadius: 'var(--r-sm)',
+    padding: '8px 12px',
+  },
+  emptyCard: { padding: 28, textAlign: 'center', color: 'var(--ink-700)' },
+  grid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
+    gap: 18,
+  },
+  card: {
+    overflow: 'hidden',
+    display: 'flex',
+    flexDirection: 'column',
+  },
+  cardActions: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' },
+  overlay: {
+    position: 'fixed',
+    inset: 0,
+    background: 'rgba(26, 22, 20, .45)',
+    backdropFilter: 'blur(4px)',
+    WebkitBackdropFilter: 'blur(4px)',
+    display: 'grid',
+    placeItems: 'center',
+    padding: 16,
+    zIndex: 100,
+  },
+  modalCard: { width: '100%', maxWidth: 480, padding: 28 },
+  modalActions: {
+    display: 'flex',
+    justifyContent: 'flex-end',
+    gap: 10,
+    marginTop: 14,
+  },
 }

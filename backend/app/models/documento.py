@@ -1,5 +1,5 @@
 from typing import Literal, Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 TipoDoc = Literal["pdf", "pptx", "txt"]
 
@@ -13,3 +13,5 @@ class DocumentoResponse(BaseModel):
     paginas: int
     chunks_count: int
     docente_id: str
+    semana: Optional[int] = Field(default=None, ge=1, le=30)
+    referencia: Optional[str] = Field(default=None, max_length=300)
