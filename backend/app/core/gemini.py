@@ -23,6 +23,8 @@ SYSTEM_PROMPT = (
     "Empieza directamente con la respuesta.\n"
     "- Responde SIEMPRE en español, con tono claro y didáctico.\n"
     "- Usa listas o pasos cuando ayuden a la comprensión.\n\n"
+    "- Cuando cites fuentes, evita repetir la misma cita en la misma oracion. "
+    "Una cita al final del parrafo o punto es suficiente.\n\n"
     "TIPOS DE PREGUNTA:\n\n"
     "A) SALUDOS o preguntas sobre ti ('hola', '¿quién eres?'):\n"
     "   Una sola oración: preséntate como ProfeTEC.IA y di que ayudas con dudas "
@@ -47,6 +49,9 @@ SYSTEM_PROMPT_SOCRATICO = (
     "- En medio de una conversación NO repitas saludos como '¡Hola!'. Solo saluda "
     "en el primer mensaje del diálogo.\n"
     "- Usa listas o pasos solo cuando ayuden a la comprensión.\n\n"
+    "- Si el estudiante pide tips, ejemplos, pasos, revision o ayuda practica, "
+    "da 2-4 orientaciones accionables basadas en el material y cierra con una "
+    "sola pregunta guia. No conviertas todo el turno en preguntas.\n\n"
     "TIPOS DE MENSAJE:\n\n"
     "A) SALUDOS o preguntas sobre ti ('hola', '¿quién eres?'):\n"
     "   Una sola oración: preséntate como ProfeTEC.IA en modo socrático y di que "
@@ -90,6 +95,43 @@ _RENDICION_PALABRAS = frozenset({
     "ayuda", "ayúdame", "ayudame", "rendido", "dímelo", "dimelo",
 })
 
+_AGRADECIMIENTOS = frozenset({
+    "gracias", "muchas gracias", "mil gracias", "thanks", "thank you",
+    "te agradezco", "genial gracias", "ok gracias", "vale gracias",
+})
+
+_DESPEDIDAS = frozenset({
+    "chau", "chao", "adios", "adiós", "hasta luego", "nos vemos", "bye",
+})
+
+_CONFIRMACIONES_CORTAS = frozenset({
+    "ok", "okay", "oki", "vale", "listo", "perfecto", "ya", "entendido",
+    "de acuerdo", "bien", "excelente", "genial",
+})
+
+_SALUDOS = frozenset({
+    "hola", "holaa", "buenas", "buenos dias", "buenos días", "buen dia",
+    "buen día", "buenas tardes", "buenas noches", "hey", "hello", "hi",
+})
+
+_IDENTIDAD = frozenset({
+    "quien eres", "quién eres", "que eres", "qué eres", "como te llamas",
+    "cómo te llamas", "cual es tu nombre", "cuál es tu nombre",
+})
+
+_CREADOR = frozenset({
+    "quien te creo", "quién te creó", "quien te creó", "quién te creo",
+    "quien te hizo", "quién te hizo", "quien te desarrollo", "quién te desarrolló",
+    "quien te programo", "quién te programó",
+})
+
+_FUNCIONAMIENTO = frozenset({
+    "como funcionas", "cómo funcionas", "como funciona", "cómo funciona",
+    "como respondes", "cómo respondes", "que puedes hacer", "qué puedes hacer",
+    "para que sirves", "para qué sirves", "como usas las fuentes",
+    "cómo usas las fuentes", "que es rag", "qué es rag",
+})
+
 
 def es_rendicion(pregunta: str) -> bool:
     """True si el estudiante está pidiendo la respuesta directamente."""
@@ -99,11 +141,51 @@ def es_rendicion(pregunta: str) -> bool:
     return any(frase in texto for frase in _RENDICION)
 
 
+def respuesta_social(pregunta: str, modo: str = "directo") -> str | None:
+    """Responde cortesias simples sin pasar por RAG ni por el modelo."""
+    texto = _texto_normalizado(pregunta).strip("!?.¿¡")
+    if not texto:
+        return None
+    if texto in _SALUDOS:
+        if modo == "socratico":
+            return "Hola. Soy ProfeTEC.IA, tu tutor en modo socrático para practicar con el material del curso."
+        return "Hola. Soy ProfeTEC.IA, tu tutor virtual para resolver dudas usando el material del curso."
+    if texto in _IDENTIDAD or any(_contiene_frase(texto, x) for x in _IDENTIDAD):
+        return (
+            "Soy ProfeTEC.IA, un tutor virtual de TECSUP. Estoy diseñado para ayudarte "
+            "a estudiar con los documentos cargados en tu curso y responder con fuentes cuando corresponde."
+        )
+    if texto in _CREADOR or any(_contiene_frase(texto, x) for x in _CREADOR):
+        return (
+            "Fui desarrollado como parte del proyecto ProfeTEC.IA para apoyar el aprendizaje "
+            "con un tutor basado en documentos del curso."
+        )
+    if texto in _FUNCIONAMIENTO or any(_contiene_frase(texto, x) for x in _FUNCIONAMIENTO):
+        return (
+            "Funciono buscando fragmentos relevantes en los documentos subidos al curso, "
+            "luego genero una respuesta usando solo ese contexto y muestro las fuentes consultadas. "
+            "Si no hay material suficiente, debo indicarlo en vez de inventar."
+        )
+    if texto in _AGRADECIMIENTOS or any(_contiene_frase(texto, x) for x in _AGRADECIMIENTOS):
+        if modo == "socratico":
+            return "De nada. Cuando quieras seguimos practicando con el material del curso."
+        return "De nada. Cuando quieras seguimos revisando el material del curso."
+    if texto in _DESPEDIDAS:
+        return "Hasta luego. Vuelve cuando quieras repasar el material."
+    if texto in _CONFIRMACIONES_CORTAS:
+        return "Perfecto. Cuando quieras, hazme otra pregunta del material."
+    return None
+
+
 # ── Reescritura selectiva ─────────────────────────────────────────────────────
 
 _VAGAS = frozenset({
     "eso", "esto", "aquello", "eso mismo", "lo mismo", "lo anterior",
     "lo que dijiste", "lo que mencionaste", "lo que explicaste",
+    "ultimo", "último", "ultima", "última", "ultimo concepto", "último concepto",
+    "concepto anterior", "tema anterior", "eso ultimo", "eso último",
+    "dame un ejemplo", "ejemplo concreto", "ejemplo de eso", "aplicalo",
+    "aplícalo", "en la practica", "en la práctica",
     "no lo sé", "no sé", "no se", "no lo se",
     "ayúdame", "ayudame", "más", "mas", "más información",
     "explica", "explícame", "explicame",
@@ -116,13 +198,57 @@ _VAGAS = frozenset({
 })
 
 
+_SEGUIMIENTO_CONTEXTUAL = frozenset({
+    "eso", "esto", "aquello", "lo mismo", "lo anterior",
+    "lo que dijiste", "lo que mencionaste", "lo que explicaste",
+    "lo que acabas", "ultimo", "último", "ultima", "última",
+    "ultimo concepto", "último concepto", "concepto anterior", "tema anterior",
+    "ese concepto", "esa idea", "esa parte", "eso ultimo", "eso último",
+    "dame un ejemplo", "ejemplo concreto", "ejemplo de eso", "ejemplo del",
+    "aplica eso", "aplicalo", "aplícalo", "en la practica", "en la práctica",
+    "mas simple", "más simple", "resumelo", "resúmelo", "otra forma",
+})
+
+_PETICION_PRACTICA = frozenset({
+    "tip", "tips", "consejo", "consejos", "ejemplo", "pasos", "checklist",
+    "lista", "plantilla", "redacta", "redaccion", "redacción", "mejora",
+    "corrige", "revisa", "aplica", "aplicalo", "aplícalo", "como hago",
+    "cómo hago", "que hago", "qué hago", "cv", "cb", "curriculum",
+    "currículum", "reclutador", "entrevista", "que me note", "me note",
+})
+
+
+def _texto_normalizado(texto: str) -> str:
+    return " ".join((texto or "").lower().strip().split())
+
+
+def _contiene_frase(texto: str, frase: str) -> bool:
+    if not frase:
+        return False
+    if " " in frase:
+        return frase in texto
+    return re.search(rf"\b{re.escape(frase)}\b", texto) is not None
+
+
+def es_seguimiento_contextual(pregunta: str) -> bool:
+    """True si la pregunta depende claramente del tema tratado antes."""
+    texto = _texto_normalizado(pregunta)
+    return any(_contiene_frase(texto, frase) for frase in _SEGUIMIENTO_CONTEXTUAL)
+
+
+def es_peticion_practica(pregunta: str) -> bool:
+    """True si el estudiante pide ayuda aplicable: tips, ejemplos, pasos o revision."""
+    texto = _texto_normalizado(pregunta)
+    return any(_contiene_frase(texto, frase) for frase in _PETICION_PRACTICA)
+
+
 def _necesita_reescritura(pregunta: str) -> bool:
     """True si el mensaje es corto o ambiguo y necesita contextualizarse con historial."""
     palabras = pregunta.strip().split()
     if len(palabras) <= 5:
         return True
-    texto = pregunta.lower()
-    return any(v in texto for v in _VAGAS)
+    texto = _texto_normalizado(pregunta)
+    return es_seguimiento_contextual(pregunta) or any(v in texto for v in _VAGAS)
 
 
 # ── Grounding / verificación de cita ─────────────────────────────────────────
@@ -130,6 +256,40 @@ def _necesita_reescritura(pregunta: str) -> bool:
 def _tiene_cita(texto: str) -> bool:
     """True si la respuesta contiene al menos una cita de fuente del material."""
     return "[📄" in texto
+
+
+_CITA_DUPLICADA_RE = re.compile(r"(\[📄 [^\]]+\])(?:\s*\|\s*\1|\s+\1)+")
+
+
+def _limpiar_citas_duplicadas(texto: str) -> str:
+    """Colapsa citas repetidas que el modelo a veces emite pegadas."""
+    previo = None
+    limpio = texto
+    while previo != limpio:
+        previo = limpio
+        limpio = _CITA_DUPLICADA_RE.sub(r"\1", limpio)
+    return limpio
+
+
+def _instrucciones_adaptativas(pregunta: str, modo: str) -> str:
+    instrucciones = [
+        "\n\nINSTRUCCION DE ESTILO: Adapta la respuesta al usuario. Si pide repasar, "
+        "ordena por temas; si pide un ejemplo, da un caso concreto; si pide tips, "
+        "da acciones claras y breves. Evita saludos repetidos."
+    ]
+    if es_seguimiento_contextual(pregunta):
+        instrucciones.append(
+            "\n\nINSTRUCCION CONTEXTUAL: La pregunta puede depender del turno anterior "
+            "('ultimo concepto', 'eso', 'dame un ejemplo'). Usa la conversacion previa "
+            "para identificar el tema exacto antes de responder."
+        )
+    if modo == "socratico" and es_peticion_practica(pregunta):
+        instrucciones.append(
+            "\n\nINSTRUCCION SOCRATICA PRACTICA: No respondas solo con preguntas. "
+            "Entrega 2-4 tips o pasos aplicables basados en el contexto, y termina "
+            "con una unica pregunta guia para que el estudiante continue."
+        )
+    return "".join(instrucciones)
 
 
 def _get_model(modo: str = "directo"):
@@ -303,6 +463,7 @@ def generar_respuesta(
                 "Si el contexto no cubre bien la pregunta, indícalo explícitamente "
                 "en lugar de inferir o completar con conocimiento externo."
             )
+        instrucciones_extra += _instrucciones_adaptativas(pregunta, modo)
 
         prompt = (
             f"Contexto del material del curso:\n\n"
@@ -355,9 +516,9 @@ def generar_respuesta(
         raw2 = _safe_text(response2).strip()
         finish2 = _finish_reason_str(response2)
         if raw2 and finish2 != "MAX_TOKENS":
-            return raw2
+            return _limpiar_citas_duplicadas(raw2)
         if raw2 and len(raw2) > 40:
-            return raw2
+            return _limpiar_citas_duplicadas(raw2)
 
     if texto:
         # Grounding check: si había chunks y la respuesta no cita ninguno,
@@ -376,8 +537,8 @@ def generar_respuesta(
             r_g = model.generate_content(prompt_grounding_json, generation_config=config)
             texto_g = _extraer_respuesta_json(_safe_text(r_g).strip())
             if texto_g and _tiene_cita(texto_g):
-                return texto_g
-        return texto
+                return _limpiar_citas_duplicadas(texto_g)
+        return _limpiar_citas_duplicadas(texto)
 
     logger.warning("No se pudo obtener respuesta utilizable tras reintento.")
     return (
@@ -418,6 +579,7 @@ def _build_stream_prompt(
                 "Si el contexto no cubre bien la pregunta, indícalo explícitamente "
                 "en lugar de inferir o completar con conocimiento externo."
             )
+        instrucciones_extra += _instrucciones_adaptativas(pregunta, modo)
 
         return (
             f"Contexto del material del curso:\n\n"
@@ -509,9 +671,10 @@ def reescribir_consulta(pregunta: str, historial: list[dict] | None = None) -> s
         f"Mensaje de seguimiento del estudiante: {pregunta}\n\n"
         "Reescribe el mensaje de seguimiento como UNA sola consulta de búsqueda "
         "autónoma y específica, en español, que capture la intención real del "
-        "estudiante según la conversación previa. Resuelve referencias como 'eso' "
-        "o 'lo anterior', y cuando el estudiante se rinde ('no lo sé', 'ayúdame') "
-        "toma el tema que el tutor estaba tratando en su último turno. "
+        "estudiante según la conversación previa. Resuelve referencias como 'eso', "
+        "'lo anterior', 'el ultimo concepto' o 'dame un ejemplo concreto' tomando "
+        "el tema que el tutor estaba tratando en su ultimo turno. Cuando el "
+        "estudiante se rinde ('no lo sé', 'ayúdame'), conserva ese mismo tema. "
         "Devuelve SOLO la consulta, sin comillas ni explicaciones."
     )
 

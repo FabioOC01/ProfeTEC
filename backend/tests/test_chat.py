@@ -244,12 +244,44 @@ def test_chat_docente_propio_curso_ok(mock_gen, mock_rag, client_docente_propio)
     assert resp.status_code == 200
 
 
+@patch("app.routers.chat.recuperar_chunks")
+@patch("app.routers.chat.generar_respuesta")
+def test_chat_gracias_responde_sin_rag_ni_gemini(mock_gen, mock_rag, client_estudiante):
+    resp = client_estudiante.post(
+        "/cursos/curso1/chat",
+        json={"pregunta": "gracias", "modo": "socratico"},
+    )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["chunks_usados"] == []
+    assert data["respuesta"].startswith("De nada")
+    mock_rag.assert_not_called()
+    mock_gen.assert_not_called()
+
+
+@patch("app.routers.chat.recuperar_chunks")
+@patch("app.routers.chat.generar_respuesta")
+def test_chat_identidad_responde_sin_rag_ni_gemini(mock_gen, mock_rag, client_estudiante):
+    resp = client_estudiante.post(
+        "/cursos/curso1/chat",
+        json={"pregunta": "¿Quién eres?", "modo": "directo"},
+    )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["chunks_usados"] == []
+    assert "ProfeTEC.IA" in data["respuesta"]
+    mock_rag.assert_not_called()
+    mock_gen.assert_not_called()
+
+
 @patch("app.routers.chat.recuperar_chunks", return_value=[])
 @patch("app.routers.chat.generar_respuesta_stream", return_value=iter(["Hola ", "mundo"]))
 def test_chat_stream_emite_delta_y_done(mock_stream, mock_rag, client_estudiante):
     resp = client_estudiante.post(
         "/cursos/curso1/chat/stream",
-        json={"pregunta": "Hola", "modo": "directo"},
+        json={"pregunta": "Explica el tema principal", "modo": "directo"},
     )
 
     assert resp.status_code == 200
@@ -708,3 +740,207 @@ def test_chat_fallback_usa_chunks_del_turno_anterior(mock_gen, mock_rag, mock_re
     assert len(chunks_recibidos) == 1
     assert chunks_recibidos[0]["nombre_doc"] == "FODA.pdf"
     assert chunks_recibidos[0]["texto"] == "Texto FODA"
+
+
+@patch("app.routers.chat.reescribir_consulta", side_effect=lambda p, h: p)
+@patch("app.routers.chat.recuperar_chunks", return_value=[
+    {"documento_id": "d2", "nombre_doc": "FODA.pdf", "pagina": 4,
+     "texto": "Debilidades internas...", "score": 0.25},
+])
+@patch("app.routers.chat.generar_respuesta", return_value="Ejemplo con assessment center.")
+def test_chat_fallback_si_seguimiento_contextual_tiene_chunks_debiles(
+    mock_gen, mock_rag, mock_reescribir
+):
+    """Si el usuario pide 'el ultimo concepto' y el RAG trae basura debil,
+    se prefiere el material usado en el turno anterior."""
+    class _TS:
+        def __init__(self, t):
+            self._t = t
+        def timestamp(self):
+            return self._t
+
+    db = MagicMock()
+    curso_doc = MagicMock()
+    curso_doc.exists = True
+    curso_doc.to_dict.return_value = {"nombre": "Curso", "docente_id": "docente_uid", "activo": True}
+    user_doc = MagicMock()
+    user_doc.exists = True
+    user_doc.to_dict.return_value = {"rol": "estudiante", "nombre": "Test"}
+    matricula_doc = MagicMock()
+    matricula_doc.exists = True
+
+    conv_ref = MagicMock()
+    conv_ref.id = "conv-assessment"
+    conv_doc = MagicMock()
+    conv_doc.exists = True
+    conv_doc.to_dict.return_value = {"curso_id": "curso1", "usuario_id": "estudiante_uid"}
+    conv_ref.get.return_value = conv_doc
+
+    chunk_guardado = {
+        "documento_id": "d1",
+        "nombre_doc": "Assessment.pdf",
+        "pagina": 2,
+        "fragmento": "El assessment center usa situaciones simuladas para evaluar candidatos.",
+    }
+    msg_prev = MagicMock()
+    msg_prev.to_dict.return_value = {
+        "pregunta": "¿Que es un Assessment Center?",
+        "respuesta": "Evalua candidatos con situaciones simuladas.",
+        "usuario_id": "estudiante_uid",
+        "creado_en": _TS(10.0),
+        "chunks_usados": [chunk_guardado],
+    }
+    msg_ref = MagicMock()
+    msg_ref.id = "msg-nuevo"
+    mensajes_col = MagicMock()
+    mensajes_col.where.return_value.stream.return_value = [msg_prev]
+    mensajes_col.add.return_value = (None, msg_ref)
+
+    def _col(name):
+        col = MagicMock()
+        dr = MagicMock()
+        if name == "cursos":
+            dr.get.return_value = curso_doc
+            col.document.return_value = dr
+        elif name == "usuarios":
+            dr.get.return_value = user_doc
+            col.document.return_value = dr
+        elif name == "matriculas":
+            dr.get.return_value = matricula_doc
+            col.document.return_value = dr
+        elif name == "conversaciones":
+            col.document.return_value = conv_ref
+        elif name == "mensajes":
+            return mensajes_col
+        return col
+
+    db.collection.side_effect = _col
+    app.dependency_overrides[get_current_user] = lambda: {"uid": "estudiante_uid"}
+    app.dependency_overrides[get_db] = lambda: db
+    with TestClient(app) as client:
+        resp = client.post(
+            "/cursos/curso1/chat",
+            json={
+                "pregunta": "Dame un ejemplo concreto del último concepto",
+                "conversacion_id": "conv-assessment",
+            },
+        )
+    app.dependency_overrides.clear()
+
+    assert resp.status_code == 200
+    chunks_recibidos = mock_gen.call_args.args[1]
+    _, _, _, _, _, contexto_debil = mock_gen.call_args.args
+    assert chunks_recibidos[0]["nombre_doc"] == "Assessment.pdf"
+    assert "situaciones simuladas" in chunks_recibidos[0]["texto"]
+    assert contexto_debil is False
+
+
+@patch("app.routers.chat.reescribir_consulta", side_effect=lambda p, h: p)
+@patch("app.routers.chat.recuperar_chunks", return_value=[])
+@patch("app.routers.chat.generar_respuesta", return_value="No esta en el material.")
+def test_chat_no_usa_fallback_historial_para_semana_explicita(
+    mock_gen, mock_rag, mock_reescribir
+):
+    """Una pregunta nueva por semana no debe contaminarse con chunks previos."""
+    class _TS:
+        def __init__(self, t):
+            self._t = t
+        def timestamp(self):
+            return self._t
+
+    db = MagicMock()
+    curso_doc = MagicMock()
+    curso_doc.exists = True
+    curso_doc.to_dict.return_value = {"nombre": "Curso", "docente_id": "docente_uid", "activo": True}
+    user_doc = MagicMock()
+    user_doc.exists = True
+    user_doc.to_dict.return_value = {"rol": "estudiante", "nombre": "Test"}
+    matricula_doc = MagicMock()
+    matricula_doc.exists = True
+
+    conv_ref = MagicMock()
+    conv_ref.id = "conv-semana"
+    conv_doc = MagicMock()
+    conv_doc.exists = True
+    conv_doc.to_dict.return_value = {"curso_id": "curso1", "usuario_id": "estudiante_uid"}
+    conv_ref.get.return_value = conv_doc
+
+    msg_prev = MagicMock()
+    msg_prev.to_dict.return_value = {
+        "pregunta": "¿Que es FODA?",
+        "respuesta": "FODA...",
+        "usuario_id": "estudiante_uid",
+        "creado_en": _TS(10.0),
+        "chunks_usados": [{
+            "documento_id": "d1",
+            "nombre_doc": "FODA.pdf",
+            "pagina": 1,
+            "fragmento": "Texto FODA",
+        }],
+    }
+    msg_ref = MagicMock()
+    msg_ref.id = "msg-nuevo"
+    mensajes_col = MagicMock()
+    mensajes_col.where.return_value.stream.return_value = [msg_prev]
+    mensajes_col.add.return_value = (None, msg_ref)
+
+    def _col(name):
+        col = MagicMock()
+        dr = MagicMock()
+        if name == "cursos":
+            dr.get.return_value = curso_doc
+            col.document.return_value = dr
+        elif name == "usuarios":
+            dr.get.return_value = user_doc
+            col.document.return_value = dr
+        elif name == "matriculas":
+            dr.get.return_value = matricula_doc
+            col.document.return_value = dr
+        elif name == "conversaciones":
+            col.document.return_value = conv_ref
+        elif name == "mensajes":
+            return mensajes_col
+        return col
+
+    db.collection.side_effect = _col
+    app.dependency_overrides[get_current_user] = lambda: {"uid": "estudiante_uid"}
+    app.dependency_overrides[get_db] = lambda: db
+    with TestClient(app) as client:
+        resp = client.post(
+            "/cursos/curso1/chat",
+            json={
+                "pregunta": "Resume los puntos clave de la semana 11",
+                "conversacion_id": "conv-semana",
+            },
+        )
+    app.dependency_overrides.clear()
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["chunks_usados"] == []
+    assert "semana 11" in data["respuesta"]
+    mock_gen.assert_not_called()
+
+
+@patch("app.routers.chat.recuperar_chunks", return_value=[
+    {"documento_id": "d1", "nombre_doc": "Semana 11.pdf", "pagina": 2,
+     "texto": "Contenido recuperado para diagnostico", "score": 0.88,
+     "semana": 11, "metadata_match": True},
+])
+def test_diagnostico_rag_docente_devuelve_chunks(mock_rag):
+    db = _mock_db_chat(rol_usuario="docente")
+    app.dependency_overrides[get_current_user] = lambda: {"uid": "docente_uid"}
+    app.dependency_overrides[get_db] = lambda: db
+    with TestClient(app) as client:
+        resp = client.post(
+            "/cursos/curso1/rag/diagnostico",
+            json={"pregunta": "Resume la semana 11"},
+        )
+    app.dependency_overrides.clear()
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["semana_detectada"] == 11
+    assert data["total_chunks"] == 1
+    assert data["contexto_debil"] is False
+    assert data["chunks"][0]["nombre_doc"] == "Semana 11.pdf"

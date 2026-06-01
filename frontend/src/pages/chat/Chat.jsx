@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { getCurso, getCursos } from '../../api/cursos.js'
+import { getDocumentos } from '../../api/documentos.js'
 import {
   enviarFeedback,
   enviarPregunta,
@@ -14,14 +15,63 @@ import Icon from '../../components/ui/Icon.jsx'
 import CitationPopover from '../../components/ui/CitationPopover.jsx'
 import { colorForIndex } from '../../components/ui/CourseCover.jsx'
 
-const SUGGESTIONS = [
-  '¿Puedes resumir la sesión anterior?',
-  'Dame un ejemplo concreto del último concepto',
-  '¿Qué documento explica mejor este tema?',
+const FALLBACK_SUGGESTIONS = [
+  '¿Qué documentos hay disponibles en este curso?',
+  'Ayúdame a repasar el material subido',
+  'Hazme preguntas de repaso del curso',
 ]
 
 const TYPE_CHARS_PER_TICK = 3
 const TYPE_TICK_MS = 18
+
+function limpiarTemaDocumento(doc) {
+  const base = (doc?.referencia || doc?.nombre || 'el material').trim()
+  return base
+    .replace(/\.(pdf|pptx|txt)$/i, '')
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function recortarTexto(texto, max = 58) {
+  if (texto.length <= max) return texto
+  return `${texto.slice(0, max - 1).trim()}…`
+}
+
+function sugerenciasDesdeDocumentos(documentos = []) {
+  const docs = [...documentos]
+    .filter((doc) => doc?.nombre && (doc.chunks_count ?? 0) > 0)
+    .sort((a, b) => {
+      const semanaA = a.semana ?? 999
+      const semanaB = b.semana ?? 999
+      if (semanaA !== semanaB) return semanaA - semanaB
+      return String(a.nombre).localeCompare(String(b.nombre))
+    })
+
+  if (!docs.length) return FALLBACK_SUGGESTIONS
+
+  const sugerencias = []
+  const primero = docs[0]
+  const temaPrimero = recortarTexto(limpiarTemaDocumento(primero), 48)
+  sugerencias.push(
+    primero.semana
+      ? `Repasemos la semana ${primero.semana}: ${temaPrimero}`
+      : `Explícame ${temaPrimero}`,
+  )
+
+  const segundo = docs[1] || docs[0]
+  sugerencias.push(`Hazme preguntas sobre ${recortarTexto(limpiarTemaDocumento(segundo), 46)}`)
+
+  const ultimo = docs[docs.length - 1]
+  const temaUltimo = recortarTexto(limpiarTemaDocumento(ultimo), 48)
+  sugerencias.push(
+    ultimo.semana
+      ? `Resume los puntos clave de la semana ${ultimo.semana}: ${temaUltimo}`
+      : `Resume los puntos clave de ${temaUltimo}`,
+  )
+
+  return [...new Set(sugerencias)].slice(0, 3)
+}
 
 export default function Chat() {
   const { cursoId } = useParams()
@@ -29,6 +79,7 @@ export default function Chat() {
 
   const [cursos, setCursos] = useState([])
   const [curso, setCurso] = useState(null)
+  const [documentos, setDocumentos] = useState([])
   const [mensajes, setMensajes] = useState([])
   const [conversaciones, setConversaciones] = useState([])
   const [conversacionId, setConversacionId] = useState(null)
@@ -47,6 +98,7 @@ export default function Chat() {
   const typingTimerRef = useRef(null)
   const typingQueueRef = useRef('')
   const pendingDoneRef = useRef(null)
+  const suggestions = useMemo(() => sugerenciasDesdeDocumentos(documentos), [documentos])
 
   const stopTypingQueue = () => {
     if (typingTimerRef.current) clearTimeout(typingTimerRef.current)
@@ -141,12 +193,14 @@ export default function Chat() {
     setMensajes([])
     setConversacionId(null)
     setConversaciones([])
+    setDocumentos([])
     setPopover(null)
-    Promise.all([getCurso(cursoId), getConversaciones(cursoId)])
-      .then(async ([c, convs]) => {
+    Promise.all([getCurso(cursoId), getConversaciones(cursoId), getDocumentos(cursoId)])
+      .then(async ([c, convs, docs]) => {
         if (!active) return
         setCurso(c)
         setConversaciones(convs)
+        setDocumentos(docs)
         if (convs.length > 0) {
           const activa = convs[0] // backend las ordena de más reciente a más antigua
           setConversacionId(activa.id)
@@ -374,7 +428,7 @@ export default function Chat() {
                 Cargando historial…
               </p>
             ) : mensajes.length === 0 && !enviando ? (
-              <WelcomeCard onPick={send} modo={modo} />
+              <WelcomeCard onPick={send} modo={modo} suggestions={suggestions} />
             ) : (
               <>
                 {mensajes.map((m) => (
@@ -399,7 +453,7 @@ export default function Chat() {
           {/* Composer */}
           <div style={s.composerWrap}>
             <div style={s.suggRow}>
-              {SUGGESTIONS.map((sg) => (
+              {suggestions.map((sg) => (
                 <button
                   key={sg}
                   type="button"
@@ -647,7 +701,7 @@ function ChatSidebar({
   )
 }
 
-function WelcomeCard({ onPick, modo }) {
+function WelcomeCard({ onPick, modo, suggestions }) {
   return (
     <div className="fade-up" style={{ padding: '20px 0', textAlign: 'center' }}>
       <div style={{ display: 'inline-block' }}>
@@ -667,7 +721,7 @@ function WelcomeCard({ onPick, modo }) {
           margin: '0 auto',
         }}
       >
-        {SUGGESTIONS.map((sg) => (
+        {suggestions.map((sg) => (
           <button
             key={sg}
             type="button"

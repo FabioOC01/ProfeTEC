@@ -109,12 +109,14 @@ def search_chunks(
     query_embedding: list[float],
     top_k: int,
     score_minimo: float,
+    semana: int | None = None,
 ) -> list[dict]:
     """Return chunks ranked by BigQuery VECTOR_SEARCH."""
     from google.cloud import bigquery
 
     client = _get_client()
     table = _table_id(client)
+    filtro_semana = "AND semana = @semana" if semana is not None else ""
     query = f"""
 SELECT
   base.chunk_id,
@@ -125,7 +127,7 @@ SELECT
   base.semana,
   distance
 FROM VECTOR_SEARCH(
-  (SELECT * FROM `{table}` WHERE curso_id = @curso_id),
+  (SELECT * FROM `{table}` WHERE curso_id = @curso_id {filtro_semana}),
   'embedding',
   (SELECT @query_embedding AS embedding),
   top_k => @top_k,
@@ -137,6 +139,11 @@ ORDER BY distance ASC
     job_config = bigquery.QueryJobConfig(
         query_parameters=[
             bigquery.ScalarQueryParameter("curso_id", "STRING", curso_id),
+            *(
+                [bigquery.ScalarQueryParameter("semana", "INT64", semana)]
+                if semana is not None
+                else []
+            ),
             bigquery.ArrayQueryParameter(
                 "query_embedding",
                 "FLOAT64",

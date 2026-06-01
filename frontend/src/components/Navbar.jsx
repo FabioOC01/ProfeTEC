@@ -6,13 +6,15 @@ import Icon from './ui/Icon.jsx'
 export default function Navbar({ breadcrumb }) {
   const navigate = useNavigate()
   const location = useLocation()
-  const { profile, firebaseUser, logout } = useAuth()
+  const { profile, viewMode, setViewMode, firebaseUser, logout } = useAuth()
   const [menuAbierto, setMenuAbierto] = useState(false)
 
   const displayName = profile?.nombre || firebaseUser?.displayName || 'Usuario'
   const firstName = displayName.split(' ')[0]
   const inicial = displayName.charAt(0).toUpperCase()
-  const isDocente = profile?.rol === 'docente'
+  const realRole = profile?.rol
+  const isDocente = viewMode === 'docente'
+  const isPreview = realRole && viewMode && realRole !== viewMode
 
   const handleLogout = async () => {
     setMenuAbierto(false)
@@ -78,13 +80,40 @@ export default function Navbar({ breadcrumb }) {
 
         {/* Right */}
         <div style={s.right}>
-          {profile?.rol && (
+          {realRole && (
             <span
               className={isDocente ? 'chip chip-lav' : 'chip chip-mint'}
               style={s.rolChip}
             >
-              {isDocente ? 'Docente' : 'Estudiante'}
+              Vista {isDocente ? 'docente' : 'estudiante'}
             </span>
+          )}
+
+          {realRole && (
+            <div style={s.viewToggle} role="group" aria-label="Cambiar vista">
+              <button
+                type="button"
+                onClick={() => setViewMode('estudiante')}
+                style={{
+                  ...s.viewToggleBtn,
+                  ...(viewMode === 'estudiante' ? s.viewToggleActive : null),
+                }}
+                title="Ver como estudiante"
+              >
+                Est.
+              </button>
+              <button
+                type="button"
+                onClick={() => setViewMode('docente')}
+                style={{
+                  ...s.viewToggleBtn,
+                  ...(viewMode === 'docente' ? s.viewToggleActive : null),
+                }}
+                title="Ver como docente"
+              >
+                Doc.
+              </button>
+            </div>
           )}
 
           <div style={s.userZona}>
@@ -109,6 +138,36 @@ export default function Navbar({ breadcrumb }) {
                   <div style={s.menuHeader}>
                     <strong style={{ fontSize: 14 }}>{displayName}</strong>
                     <small style={s.menuEmail}>{firebaseUser?.email}</small>
+                    {isPreview && (
+                      <small style={s.menuPreview}>
+                        Rol real: {realRole}. Vista activa: {viewMode}.
+                      </small>
+                    )}
+                  </div>
+                  <div style={s.menuViewBlock}>
+                    <span className="t-tiny t-muted">Cambiar vista</span>
+                    <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+                      <button
+                        type="button"
+                        onClick={() => setViewMode('estudiante')}
+                        style={{
+                          ...s.menuViewBtn,
+                          ...(viewMode === 'estudiante' ? s.menuViewBtnActive : null),
+                        }}
+                      >
+                        Estudiante
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setViewMode('docente')}
+                        style={{
+                          ...s.menuViewBtn,
+                          ...(viewMode === 'docente' ? s.menuViewBtnActive : null),
+                        }}
+                      >
+                        Docente
+                      </button>
+                    </div>
                   </div>
                   <button
                     type="button"
@@ -218,6 +277,31 @@ const s = {
   },
   right: { display: 'flex', alignItems: 'center', gap: 10 },
   rolChip: { textTransform: 'capitalize' },
+  viewToggle: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: 2,
+    padding: 3,
+    background: 'var(--paper-2)',
+    border: '1px solid var(--ink-100)',
+    borderRadius: 'var(--r-pill)',
+  },
+  viewToggleBtn: {
+    height: 26,
+    minWidth: 40,
+    border: '1px solid transparent',
+    borderRadius: 'var(--r-pill)',
+    background: 'transparent',
+    color: 'var(--ink-600)',
+    fontSize: 11.5,
+    cursor: 'pointer',
+  },
+  viewToggleActive: {
+    background: 'var(--surface)',
+    borderColor: 'var(--ink-100)',
+    color: 'var(--ink-900)',
+    boxShadow: 'var(--sh-1)',
+  },
   userZona: { position: 'relative' },
   userBtn: {
     display: 'flex',
@@ -272,6 +356,27 @@ const s = {
     marginBottom: 4,
   },
   menuEmail: { color: 'var(--ink-500)', fontSize: 12 },
+  menuPreview: { color: 'var(--amber-700)', fontSize: 11.5, marginTop: 4 },
+  menuViewBlock: {
+    padding: '9px 12px 10px',
+    borderBottom: '1px solid var(--ink-100)',
+    marginBottom: 4,
+  },
+  menuViewBtn: {
+    flex: 1,
+    border: '1px solid var(--ink-100)',
+    borderRadius: 'var(--r-sm)',
+    background: 'var(--paper-2)',
+    padding: '7px 8px',
+    fontSize: 12,
+    cursor: 'pointer',
+    color: 'var(--ink-700)',
+  },
+  menuViewBtnActive: {
+    background: 'var(--ink-900)',
+    color: 'var(--paper)',
+    borderColor: 'var(--ink-900)',
+  },
   menuItem: {
     display: 'flex',
     alignItems: 'center',

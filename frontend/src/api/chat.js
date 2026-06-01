@@ -94,3 +94,6 @@ export const enviarFeedback = (cursoId, mensajeId, valor, comentario = null) =>
 
 export const getAnalytics = (cursoId) =>
   api.get(`/cursos/${cursoId}/analytics`).then((r) => r.data)
+
+export const diagnosticarRag = (cursoId, pregunta) =>
+  api.post(`/cursos/${cursoId}/rag/diagnostico`, { pregunta }).then((r) => r.data)

@@ -9,12 +9,13 @@ import SectionHead from '../components/ui/SectionHead.jsx'
 import CourseCover, { colorForIndex } from '../components/ui/CourseCover.jsx'
 
 export default function Dashboard() {
-  const { profile, firebaseUser } = useAuth()
+  const { profile, viewMode, firebaseUser } = useAuth()
   const navigate = useNavigate()
   const [cursos, setCursos] = useState([])
   const [loading, setLoading] = useState(true)
 
-  const esDocente = profile?.rol === 'docente'
+  const esDocente = viewMode === 'docente'
+  const puedeGestionar = profile?.rol === 'docente'
   const nombre =
     (profile?.nombre || firebaseUser?.displayName || '').split(' ')[0] || 'estudiante'
 
@@ -76,7 +77,7 @@ export default function Dashboard() {
                 disabled={loading}
               >
                 <Icon name="chat" size={15} />
-                {esDocente ? 'Ver mis cursos' : 'Abrir tutor'}
+                {esDocente ? (puedeGestionar ? 'Ver mis cursos' : 'Vista docente') : 'Abrir tutor'}
               </button>
               <button
                 type="button"
@@ -84,7 +85,7 @@ export default function Dashboard() {
                 onClick={() => navigate('/cursos')}
               >
                 <Icon name="book" size={15} />
-                {esDocente ? 'Material' : 'Mis cursos'}
+              {esDocente ? 'Material' : 'Mis cursos'}
               </button>
             </div>
           </div>
@@ -111,7 +112,7 @@ export default function Dashboard() {
               onClick={() => navigate('/cursos')}
             >
               <Icon name="plus" size={14} />
-              {esDocente ? 'Nuevo curso' : 'Inscribirme'}
+              {esDocente ? (puedeGestionar ? 'Nuevo curso' : 'Ver cursos') : 'Inscribirme'}
             </button>
           }
         />
@@ -122,7 +123,9 @@ export default function Dashboard() {
           <div className="card" style={s.emptyCard}>
             <p style={{ marginBottom: 14 }}>
               {esDocente
-                ? 'Aún no tienes cursos. Crea uno para empezar a subir material.'
+                ? puedeGestionar
+                  ? 'Aún no tienes cursos. Crea uno para empezar a subir material.'
+                  : 'Esta es la vista docente. Tus permisos reales siguen siendo de estudiante.'
                 : 'Aún no estás inscrito en ningún curso. Pídele a tu docente el código del curso.'}
             </p>
             <button
@@ -130,7 +133,7 @@ export default function Dashboard() {
               className="btn btn-primary"
               onClick={() => navigate('/cursos')}
             >
-              {esDocente ? 'Crear primer curso' : 'Ir a inscribirme'}
+              {esDocente ? (puedeGestionar ? 'Crear primer curso' : 'Ver cursos') : 'Ir a inscribirme'}
             </button>
           </div>
         ) : (

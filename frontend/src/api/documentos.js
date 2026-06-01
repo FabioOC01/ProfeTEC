@@ -3,6 +3,9 @@ import { api } from './client.js'
 export const getDocumentos = (cursoId) =>
   api.get(`/cursos/${cursoId}/documentos`).then((r) => r.data)
 
+export const getCoberturaDocumentos = (cursoId) =>
+  api.get(`/cursos/${cursoId}/documentos/cobertura`).then((r) => r.data)
+
 export const uploadDocumento = (cursoId, file, metadata = {}, onProgress) => {
   const form = new FormData()
   form.append('archivo', file)

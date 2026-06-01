@@ -1,8 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 import { Navigate, useNavigate, useParams } from 'react-router-dom'
 import { getCurso } from '../../api/cursos.js'
-import { deleteDocumento, getDocumentos, uploadDocumento } from '../../api/documentos.js'
-import { getAnalytics } from '../../api/chat.js'
+import {
+  deleteDocumento,
+  getCoberturaDocumentos,
+  getDocumentos,
+  uploadDocumento,
+} from '../../api/documentos.js'
+import { diagnosticarRag, getAnalytics } from '../../api/chat.js'
 import { useAuth } from '../../context/AuthContext.jsx'
 import Navbar from '../../components/Navbar.jsx'
 import Icon from '../../components/ui/Icon.jsx'
@@ -19,11 +24,11 @@ function tituloDesdeArchivo(file) {
 export default function CursoDetalle() {
   const { cursoId } = useParams()
   const navigate = useNavigate()
-  const { profile } = useAuth()
-  const isDocente = profile?.rol === 'docente'
+  const { profile, viewMode } = useAuth()
+  const isDocenteView = viewMode === 'docente'
 
-  // Estudiantes ahora chatean en /chat/:cursoId — esta página es solo para docentes.
-  if (profile && !isDocente) {
+  // En vista estudiante, el detalle del curso se reemplaza por el tutor.
+  if (profile && !isDocenteView) {
     return <Navigate to={`/chat/${cursoId}`} replace />
   }
 
@@ -32,8 +37,11 @@ export default function CursoDetalle() {
 
 function CursoDetalleDocente({ cursoId, navigate }) {
   const inputRef = useRef(null)
+  const { profile } = useAuth()
+  const canManage = profile?.rol === 'docente'
   const [curso, setCurso] = useState(null)
   const [documentos, setDocumentos] = useState([])
+  const [cobertura, setCobertura] = useState(null)
   const [analytics, setAnalytics] = useState(null)
   const [loading, setLoading] = useState(true)
   const [loadingAnalytics, setLoadingAnalytics] = useState(false)
@@ -42,6 +50,9 @@ function CursoDetalleDocente({ cursoId, navigate }) {
   const [uploadOpen, setUploadOpen] = useState(false)
   const [uploadDraft, setUploadDraft] = useState(UPLOAD_INICIAL)
   const [dragActive, setDragActive] = useState(false)
+  const [ragPregunta, setRagPregunta] = useState('')
+  const [ragDiagnostico, setRagDiagnostico] = useState(null)
+  const [diagnosticando, setDiagnosticando] = useState(false)
   const [error, setError] = useState(null)
 
   useEffect(() => {
@@ -52,13 +63,15 @@ function CursoDetalleDocente({ cursoId, navigate }) {
       setError(null)
       setAnalytics(null)
       try {
-        const [c, docs] = await Promise.all([
+        const [c, docs, cov] = await Promise.all([
           getCurso(cursoId),
           getDocumentos(cursoId),
+          getCoberturaDocumentos(cursoId),
         ])
         if (cancelado) return
         setCurso(c)
         setDocumentos(docs)
+        setCobertura(cov)
       } catch (e) {
         if (cancelado) return
         setError(e.response?.data?.detail || e.message)
@@ -68,6 +81,7 @@ function CursoDetalleDocente({ cursoId, navigate }) {
     }
 
     const cargarAnalytics = async () => {
+      if (!canManage) return
       setLoadingAnalytics(true)
       try {
         const metricas = await getAnalytics(cursoId)
@@ -85,10 +99,15 @@ function CursoDetalleDocente({ cursoId, navigate }) {
     return () => {
       cancelado = true
     }
-  }, [cursoId])
+  }, [cursoId, canManage])
+
+  const refreshCobertura = () => {
+    getCoberturaDocumentos(cursoId).then(setCobertura).catch(() => {})
+  }
 
   const prepararArchivo = (file) => {
     if (!file || uploading) return
+    if (!canManage) return
     setError(null)
     setUploadOpen(true)
     setUploadDraft((prev) => ({
@@ -124,6 +143,7 @@ function CursoDetalleDocente({ cursoId, navigate }) {
     const semana = Number(uploadDraft.semana)
     const referencia = uploadDraft.referencia.trim()
     if (!file || !titulo || !semana) return
+    if (!canManage) return
     setError(null)
     setUploading(true)
     setProgreso(0)
@@ -147,6 +167,7 @@ function CursoDetalleDocente({ cursoId, navigate }) {
       setUploadOpen(false)
       setUploadDraft(UPLOAD_INICIAL)
       setDragActive(false)
+      refreshCobertura()
     } catch (err) {
       setError(err.response?.data?.detail || err.message)
     } finally {
@@ -157,6 +178,7 @@ function CursoDetalleDocente({ cursoId, navigate }) {
 
   const handleDelete = async (doc) => {
     if (!confirm(`¿Eliminar "${doc.nombre}" y todos sus chunks?`)) return
+    if (!canManage) return
     const snapshot = documentos
     setError(null)
     setDocumentos((prev) => prev.filter((d) => d.id !== doc.id))
@@ -171,6 +193,7 @@ function CursoDetalleDocente({ cursoId, navigate }) {
     ))
     try {
       await deleteDocumento(cursoId, doc.id)
+      refreshCobertura()
     } catch (err) {
       setDocumentos(snapshot)
       setAnalytics((prev) => (
@@ -183,6 +206,24 @@ function CursoDetalleDocente({ cursoId, navigate }) {
           : prev
       ))
       setError(err.response?.data?.detail || err.message)
+    }
+  }
+
+  const handleDiagnostico = async (e) => {
+    e.preventDefault()
+    const pregunta = ragPregunta.trim()
+    if (!pregunta || diagnosticando) return
+    if (!canManage) return
+    setDiagnosticando(true)
+    setRagDiagnostico(null)
+    setError(null)
+    try {
+      const data = await diagnosticarRag(cursoId, pregunta)
+      setRagDiagnostico(data)
+    } catch (err) {
+      setError(err.response?.data?.detail || err.message)
+    } finally {
+      setDiagnosticando(false)
     }
   }
 
@@ -239,7 +280,8 @@ function CursoDetalleDocente({ cursoId, navigate }) {
               type="button"
               className="btn btn-primary"
               onClick={() => setUploadOpen(true)}
-              disabled={uploading}
+              disabled={uploading || !canManage}
+              title={canManage ? 'Subir documento' : 'Solo disponible para docentes reales'}
             >
               <Icon name="upload" size={15} />
               {uploading ? `Procesando ${progreso}%` : 'Subir documento'}
@@ -255,7 +297,14 @@ function CursoDetalleDocente({ cursoId, navigate }) {
 
         {error && <p style={s.error}>{error}</p>}
 
-        {uploadOpen && (
+        {!canManage && (
+          <p style={s.notice}>
+            Estás viendo la interfaz de docente en modo previsualización. Puedes revisar el
+            material y la cobertura, pero subir, eliminar o diagnosticar RAG requiere rol docente.
+          </p>
+        )}
+
+        {uploadOpen && canManage && (
           <div style={s.overlay} onClick={cerrarUpload}>
             <form
               className="card card-elev"
@@ -403,6 +452,102 @@ function CursoDetalleDocente({ cursoId, navigate }) {
           </p>
         )}
 
+        {cobertura && (
+          <section style={s.ragGrid}>
+            <div className="card" style={s.ragPanel}>
+              <SectionHead
+                eyebrow="Cobertura RAG"
+                title="Semanas con material indexado"
+              />
+              {cobertura.semanas.length === 0 ? (
+                <p className="t-muted" style={{ fontSize: 13 }}>
+                  Todavía no hay semanas indexadas.
+                </p>
+              ) : (
+                <div style={s.weekChips}>
+                  {cobertura.semanas.map((semana) => {
+                    const ok = semana.chunks > 0
+                    return (
+                      <span
+                        key={semana.semana}
+                        style={{
+                          ...s.weekChip,
+                          borderColor: ok ? 'var(--mint-500)' : 'var(--danger)',
+                          background: ok ? 'var(--mint-100)' : 'rgba(214,90,71,.07)',
+                          color: ok ? 'var(--mint-700)' : 'var(--danger)',
+                        }}
+                        title={semana.nombres.join(', ')}
+                      >
+                        S{semana.semana} · {semana.chunks} chunks
+                      </span>
+                    )
+                  })}
+                </div>
+              )}
+              <p className="t-tiny t-muted" style={{ marginTop: 12 }}>
+                {cobertura.total_chunks} chunks en {cobertura.total_documentos} documentos.
+                {cobertura.semanas_sin_chunks.length > 0 && (
+                  <> Revisar semanas sin chunks: {cobertura.semanas_sin_chunks.join(', ')}.</>
+                )}
+              </p>
+            </div>
+
+            <div className="card" style={s.ragPanel}>
+              <SectionHead
+                eyebrow="Diagnóstico"
+                title="Probar recuperación"
+              />
+              <form onSubmit={handleDiagnostico} style={s.diagnosticForm}>
+                <input
+                  className="field-input"
+                  value={ragPregunta}
+                  onChange={(e) => setRagPregunta(e.target.value)}
+                  placeholder="Ej. Resume los puntos clave de la semana 11"
+                  disabled={diagnosticando || !canManage}
+                />
+                <button
+                  type="submit"
+                  className="btn btn-primary"
+                  disabled={diagnosticando || !ragPregunta.trim() || !canManage}
+                  title={canManage ? 'Probar recuperación' : 'Solo disponible para docentes reales'}
+                >
+                  <Icon name="search" size={14} />
+                  {diagnosticando ? 'Probando...' : 'Probar'}
+                </button>
+              </form>
+
+              {ragDiagnostico && (
+                <div style={s.diagnosticResult}>
+                  <div className="t-tiny t-muted">
+                    Semana detectada: {ragDiagnostico.semana_detectada ?? 'ninguna'} ·{' '}
+                    {ragDiagnostico.total_chunks} chunks ·{' '}
+                    {ragDiagnostico.contexto_debil ? 'contexto débil' : 'contexto sólido'}
+                  </div>
+                  {ragDiagnostico.chunks.length === 0 ? (
+                    <p style={{ marginTop: 8, fontSize: 13 }}>
+                      No se recuperó material para esta consulta.
+                    </p>
+                  ) : (
+                    <div style={s.diagnosticChunks}>
+                      {ragDiagnostico.chunks.slice(0, 4).map((chunk, i) => (
+                        <div key={`${chunk.documento_id}-${chunk.pagina}-${i}`} style={s.diagnosticChunk}>
+                          <strong>{chunk.nombre_doc}</strong>
+                          <span className="t-tiny t-muted">
+                            pág. {chunk.pagina} · score {chunk.score.toFixed(2)}
+                            {chunk.semana ? ` · semana ${chunk.semana}` : ''}
+                            {chunk.metadata_match ? ' · metadata' : ''}
+                          </span>
+                          <p>{chunk.fragmento}</p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </section>
+        )}
+
         <SectionHead
           eyebrow="Indexado y disponible para el tutor"
           title={`Material del curso (${documentos.length})`}
@@ -465,6 +610,8 @@ function CursoDetalleDocente({ cursoId, navigate }) {
                   type="button"
                   className="btn btn-danger"
                   onClick={() => handleDelete(doc)}
+                  disabled={!canManage}
+                  title={canManage ? 'Eliminar' : 'Solo disponible para docentes reales'}
                   style={{ padding: '6px 10px', fontSize: 12 }}
                 >
                   <Icon name="trash" size={13} /> Eliminar
@@ -597,6 +744,15 @@ const s = {
     borderRadius: 'var(--r-sm)',
     padding: '8px 12px',
   },
+  notice: {
+    color: 'var(--amber-700)',
+    fontSize: 13,
+    marginBottom: 14,
+    background: 'var(--amber-100)',
+    border: '1px solid var(--amber-200)',
+    borderRadius: 'var(--r-sm)',
+    padding: '8px 12px',
+  },
   metrics: {
     display: 'grid',
     gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))',
@@ -607,6 +763,55 @@ const s = {
     padding: '16px 18px',
     display: 'flex',
     flexDirection: 'column',
+  },
+  ragGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1.15fr)',
+    gap: 12,
+    marginBottom: 32,
+  },
+  ragPanel: {
+    padding: 18,
+    minWidth: 0,
+  },
+  weekChips: {
+    display: 'flex',
+    gap: 8,
+    flexWrap: 'wrap',
+  },
+  weekChip: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    minHeight: 28,
+    padding: '5px 9px',
+    border: '1px solid var(--ink-100)',
+    borderRadius: 'var(--r-pill)',
+    fontSize: 12,
+    fontWeight: 600,
+  },
+  diagnosticForm: {
+    display: 'grid',
+    gridTemplateColumns: 'minmax(0, 1fr) auto',
+    gap: 8,
+    alignItems: 'center',
+  },
+  diagnosticResult: {
+    marginTop: 12,
+    borderTop: '1px solid var(--ink-100)',
+    paddingTop: 12,
+  },
+  diagnosticChunks: {
+    display: 'grid',
+    gap: 8,
+    marginTop: 10,
+  },
+  diagnosticChunk: {
+    padding: 10,
+    border: '1px solid var(--ink-100)',
+    borderRadius: 'var(--r-sm)',
+    background: 'var(--paper-2)',
+    fontSize: 12.5,
+    lineHeight: 1.45,
   },
   emptyCard: { padding: 28, textAlign: 'center' },
   docsGrid: {

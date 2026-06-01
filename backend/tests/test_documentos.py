@@ -192,3 +192,55 @@ def test_eliminar_documento_borra_chunks_bigquery(mock_bq_delete, mock_delete):
 
     assert response.status_code == 204
     mock_bq_delete.assert_called_once_with(DOC_ID)
+
+
+def test_cobertura_documentos_resume_semanas_y_chunks():
+    docs = [
+        _doc("d1", {
+            "curso_id": CURSO_ID,
+            "docente_id": DOCENTE_CLAIMS["uid"],
+            "nombre": "Semana 1 Perfil",
+            "tipo": "pdf",
+            "storage_path": "gs://a",
+            "paginas": 4,
+            "chunks_count": 8,
+            "semana": 1,
+        }),
+        _doc("d2", {
+            "curso_id": CURSO_ID,
+            "docente_id": DOCENTE_CLAIMS["uid"],
+            "nombre": "Semana 2 CV",
+            "tipo": "pptx",
+            "storage_path": "gs://b",
+            "paginas": 5,
+            "chunks_count": 0,
+            "semana": 2,
+        }),
+    ]
+    db, _batch, _doc_ref = _db_documentos()
+
+    def _collection(name):
+        col = MagicMock()
+        ref = MagicMock()
+        if name == "usuarios":
+            ref.get.return_value = _doc(DOCENTE_CLAIMS["uid"], {"rol": "docente", "nombre": "Docente"})
+            col.document.return_value = ref
+        elif name == "cursos":
+            ref.get.return_value = _doc(CURSO_ID, {"docente_id": DOCENTE_CLAIMS["uid"], "activo": True})
+            col.document.return_value = ref
+        elif name == "documentos":
+            col.where.return_value.stream.return_value = docs
+        return col
+
+    db.collection.side_effect = _collection
+    _override_db(db)
+    with TestClient(app) as client:
+        response = client.get(f"/cursos/{CURSO_ID}/documentos/cobertura")
+    _clear_overrides()
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total_documentos"] == 2
+    assert data["total_chunks"] == 8
+    assert [s["semana"] for s in data["semanas"]] == [1, 2]
+    assert data["semanas_sin_chunks"] == [2]

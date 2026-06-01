@@ -15,11 +15,13 @@ from app.core.auth import get_current_user
 from app.core.firestore_client import get_db
 from app.core.gemini import (
     es_rendicion,
+    es_seguimiento_contextual,
     generar_respuesta,
     generar_respuesta_stream,
     reescribir_consulta,
+    respuesta_social,
 )
-from app.core.rag import recuperar_chunks
+from app.core.rag import detectar_semana, recuperar_chunks
 from app.models.mensaje import (
     ChatRequest,
     ChatResponse,
@@ -29,6 +31,9 @@ from app.models.mensaje import (
     FeedbackRequest,
     FeedbackResponse,
     MensajeOut,
+    RagChunkDiagnostico,
+    RagDiagnosticoRequest,
+    RagDiagnosticoResponse,
 )
 
 # Cuántos turnos previos de la conversación se envían a Gemini como memoria.
@@ -145,7 +150,7 @@ def _chunks_fallback_historial(conv_id: str, db) -> list[dict]:
             "nombre_doc": c.get("nombre_doc", ""),
             "pagina": c.get("pagina", 1),
             "texto": c.get("fragmento", c.get("texto", "")),
-            "score": 0.0,
+            "score": settings.rag_score_confianza,
         }
         for c in ultimo.get("chunks_usados", [])
     ]
@@ -162,6 +167,52 @@ def _flags_rag(chunks: list[dict], modo: str, pregunta: str) -> tuple[bool, bool
     score_max = max(c.get("score", 0.0) for c in chunks)
     contexto_debil = score_max < settings.rag_score_confianza
     return rendicion, contexto_debil
+
+
+def _chunks_son_debiles(chunks: list[dict]) -> bool:
+    if not chunks:
+        return False
+    score_max = max(c.get("score", 0.0) for c in chunks)
+    return score_max < settings.rag_score_confianza
+
+
+def _es_mensaje_dependiente_historial(pregunta: str) -> bool:
+    texto = (pregunta or "").strip()
+    if detectar_semana(texto) is not None:
+        return False
+    if es_seguimiento_contextual(texto) or es_rendicion(texto):
+        return True
+    return len(texto.split()) <= 5
+
+
+def _aplicar_fallback_contextual(
+    chunks: list[dict],
+    conv_id: str,
+    db,
+    es_nueva: bool,
+    pregunta: str,
+) -> list[dict]:
+    """Usa chunks previos cuando el turno actual es seguimiento y el RAG duda."""
+    if es_nueva:
+        return chunks
+
+    depende_historial = _es_mensaje_dependiente_historial(pregunta)
+
+    if not chunks:
+        return _chunks_fallback_historial(conv_id, db) if depende_historial else chunks
+
+    if depende_historial and _chunks_son_debiles(chunks):
+        fallback = _chunks_fallback_historial(conv_id, db)
+        return fallback or chunks
+
+    return chunks
+
+
+def _respuesta_sin_material_semana(semana: int) -> str:
+    return (
+        f"No encontré material indexado para la semana {semana}. "
+        "Revisa si el documento fue subido con esa semana y si tiene chunks generados."
+    )
 
 
 @router.post(
@@ -192,21 +243,46 @@ def chat_con_tutor(
     )
     historial = [] if es_nueva else _historial_conversacion(conv_id, db)
 
+    respuesta_cortesia = respuesta_social(body.pregunta, body.modo)
+    if respuesta_cortesia:
+        ahora = datetime.now(timezone.utc)
+        _, msg_ref = db.collection("mensajes").add({
+            "conversacion_id": conv_id,
+            "curso_id": curso_id,
+            "usuario_id": uid,
+            "pregunta": body.pregunta,
+            "respuesta": respuesta_cortesia,
+            "modo": body.modo,
+            "chunks_usados": [],
+            "creado_en": firestore.SERVER_TIMESTAMP,
+        })
+        return ChatResponse(
+            respuesta=respuesta_cortesia,
+            conversacion_id=conv_id,
+            mensaje_id=msg_ref.id,
+            modo=body.modo,
+            chunks_usados=[],
+            creado_en=ahora,
+        )
+
     # ── 2. RAG: recuperar chunks relevantes ──────────────────────────────────
     consulta_rag = reescribir_consulta(body.pregunta, historial)
     chunks = recuperar_chunks(curso_id, consulta_rag, db)
 
-    # Fallback: si la búsqueda no trajo nada y hay historial, reutilizamos los
-    # chunks del turno anterior (mismo tema, evita el "no está en el material").
-    if not chunks and not es_nueva:
-        chunks = _chunks_fallback_historial(conv_id, db)
+    # Fallback: si es seguimiento y la busqueda sale vacia o debil, reutilizamos
+    # los chunks del turno anterior (mismo tema, evita respuestas fuera de hilo).
+    chunks = _aplicar_fallback_contextual(chunks, conv_id, db, es_nueva, body.pregunta)
+    semana_detectada = detectar_semana(body.pregunta)
 
     rendicion, contexto_debil = _flags_rag(chunks, body.modo, body.pregunta)
 
     # ── 3. Generar respuesta con Gemini (con memoria del diálogo) ────────────
-    respuesta = generar_respuesta(
-        body.pregunta, chunks, body.modo, historial, rendicion, contexto_debil
-    )
+    if semana_detectada is not None and not chunks:
+        respuesta = _respuesta_sin_material_semana(semana_detectada)
+    else:
+        respuesta = generar_respuesta(
+            body.pregunta, chunks, body.modo, historial, rendicion, contexto_debil
+        )
 
     # ── 4. Guardar mensaje ────────────────────────────────────────────────────
     ahora = datetime.now(timezone.utc)
@@ -262,12 +338,44 @@ def chat_con_tutor_stream(
         respuesta_partes: list[str] = []
         chunks_citados: list[dict] = []
         try:
+            respuesta_cortesia = respuesta_social(body.pregunta, body.modo)
+            if respuesta_cortesia:
+                chunks_citados = []
+                yield _sse_event("meta", {
+                    "conversacion_id": conv_id,
+                    "modo": body.modo,
+                    "chunks_usados": chunks_citados,
+                })
+                yield _sse_event("status", {"stage": "generating"})
+                respuesta_partes.append(respuesta_cortesia)
+                yield _sse_event("delta", {"text": respuesta_cortesia})
+                ahora = datetime.now(timezone.utc)
+                _, msg_ref = db.collection("mensajes").add({
+                    "conversacion_id": conv_id,
+                    "curso_id": curso_id,
+                    "usuario_id": uid,
+                    "pregunta": body.pregunta,
+                    "respuesta": respuesta_cortesia,
+                    "modo": body.modo,
+                    "chunks_usados": chunks_citados,
+                    "creado_en": firestore.SERVER_TIMESTAMP,
+                })
+                yield _sse_event("done", {
+                    "respuesta": respuesta_cortesia,
+                    "conversacion_id": conv_id,
+                    "mensaje_id": msg_ref.id,
+                    "modo": body.modo,
+                    "chunks_usados": chunks_citados,
+                    "creado_en": ahora.isoformat(),
+                })
+                return
+
             yield _sse_event("status", {"stage": "retrieving"})
             consulta_rag = reescribir_consulta(body.pregunta, historial)
             chunks = recuperar_chunks(curso_id, consulta_rag, db)
 
-            if not chunks and not es_nueva:
-                chunks = _chunks_fallback_historial(conv_id, db)
+            chunks = _aplicar_fallback_contextual(chunks, conv_id, db, es_nueva, body.pregunta)
+            semana_detectada = detectar_semana(body.pregunta)
 
             rendicion, contexto_debil = _flags_rag(chunks, body.modo, body.pregunta)
             chunks_citados = _chunks_citados(chunks)
@@ -278,11 +386,16 @@ def chat_con_tutor_stream(
             })
 
             yield _sse_event("status", {"stage": "generating"})
-            for delta in generar_respuesta_stream(
-                body.pregunta, chunks, body.modo, historial, rendicion, contexto_debil
-            ):
-                respuesta_partes.append(delta)
-                yield _sse_event("delta", {"text": delta})
+            if semana_detectada is not None and not chunks:
+                respuesta_sin_material = _respuesta_sin_material_semana(semana_detectada)
+                respuesta_partes.append(respuesta_sin_material)
+                yield _sse_event("delta", {"text": respuesta_sin_material})
+            else:
+                for delta in generar_respuesta_stream(
+                    body.pregunta, chunks, body.modo, historial, rendicion, contexto_debil
+                ):
+                    respuesta_partes.append(delta)
+                    yield _sse_event("delta", {"text": delta})
 
             respuesta = "".join(respuesta_partes).strip()
             if not respuesta:
@@ -460,6 +573,45 @@ def registrar_feedback(
         mensaje_id=mensaje_id,
         feedback_valor=body.valor,
         feedback_comentario=comentario,
+    )
+
+
+@router.post(
+    "/cursos/{curso_id}/rag/diagnostico",
+    response_model=RagDiagnosticoResponse,
+    summary="Diagnosticar recuperacion RAG de una pregunta",
+)
+def diagnosticar_rag(
+    curso_id: str,
+    body: RagDiagnosticoRequest,
+    claims: dict = Depends(get_current_user),
+    db=Depends(get_db),
+):
+    uid = claims["uid"]
+    _curso_docente_o_403(curso_id, uid, db)
+
+    consulta_rag = reescribir_consulta(body.pregunta, [])
+    chunks = recuperar_chunks(curso_id, consulta_rag, db)
+    _rendicion, contexto_debil = _flags_rag(chunks, "directo", body.pregunta)
+
+    return RagDiagnosticoResponse(
+        pregunta=body.pregunta,
+        consulta_rag=consulta_rag,
+        semana_detectada=detectar_semana(body.pregunta),
+        total_chunks=len(chunks),
+        contexto_debil=contexto_debil,
+        chunks=[
+            RagChunkDiagnostico(
+                documento_id=c.get("documento_id", ""),
+                nombre_doc=c.get("nombre_doc", ""),
+                pagina=c.get("pagina", 1),
+                fragmento=(c.get("texto") or "")[:260],
+                score=float(c.get("score", 0.0) or 0.0),
+                semana=c.get("semana"),
+                metadata_match=bool(c.get("metadata_match", False)),
+            )
+            for c in chunks
+        ],
     )
 
 

@@ -9,8 +9,9 @@ import Icon from '../../components/ui/Icon.jsx'
 export default function QuizzesPage() {
   const { cursoId } = useParams()
   const navigate = useNavigate()
-  const { profile } = useAuth()
-  const isDocente = profile?.rol === 'docente'
+  const { profile, viewMode } = useAuth()
+  const isDocente = viewMode === 'docente'
+  const canManage = profile?.rol === 'docente'
 
   const [curso, setCurso] = useState(null)
   const [quizzes, setQuizzes] = useState([])
@@ -107,7 +108,7 @@ export default function QuizzesPage() {
             >
               <Icon name="chevron" size={14} style={{ transform: 'rotate(180deg)' }} /> Volver
             </button>
-            {isDocente && (
+            {isDocente && canManage && (
               <button
                 type="button"
                 onClick={() => setCrearOpen((v) => !v)}
@@ -121,7 +122,13 @@ export default function QuizzesPage() {
 
         {error && <p style={s.error}><Icon name="x" size={14} /> {error}</p>}
 
-        {isDocente && crearOpen && (
+        {isDocente && !canManage && (
+          <p style={s.notice}>
+            Vista docente en previsualización. La creación y eliminación de quizzes requiere rol docente.
+          </p>
+        )}
+
+        {isDocente && canManage && crearOpen && (
           <form onSubmit={onCrear} style={s.card}>
             <h3 style={{ marginBottom: 12 }}>Generar nuevo quiz</h3>
             <label style={s.label}>
@@ -211,7 +218,7 @@ export default function QuizzesPage() {
         ) : quizzes.length === 0 ? (
           <div style={s.empty}>
             <p>Aún no hay quizzes en este curso.</p>
-            {isDocente && (
+            {isDocente && canManage && (
               <p className="t-tiny t-muted">
                 Sube material al curso y haz clic en <b>Nuevo quiz</b> para generar el primero.
               </p>
@@ -246,7 +253,7 @@ export default function QuizzesPage() {
                   >
                     {isDocente ? 'Ver' : 'Resolver'}
                   </Link>
-                  {isDocente && (
+                  {isDocente && canManage && (
                     <button
                       type="button"
                       onClick={() => onEliminar(q.id)}
@@ -353,6 +360,15 @@ const s = {
     display: 'flex',
     alignItems: 'center',
     gap: 6,
+    marginBottom: 12,
+  },
+  notice: {
+    color: 'var(--amber-700)',
+    background: 'var(--amber-100)',
+    border: '1px solid var(--amber-200)',
+    borderRadius: 'var(--r-sm)',
+    padding: '8px 12px',
+    fontSize: 13,
     marginBottom: 12,
   },
 }

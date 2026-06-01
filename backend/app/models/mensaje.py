@@ -39,6 +39,29 @@ class FeedbackResponse(BaseModel):
     feedback_comentario: Optional[str] = None
 
 
+class RagDiagnosticoRequest(BaseModel):
+    pregunta: str = Field(..., min_length=1, max_length=2000)
+
+
+class RagChunkDiagnostico(BaseModel):
+    documento_id: str
+    nombre_doc: str
+    pagina: int
+    fragmento: str
+    score: float = 0.0
+    semana: Optional[int] = None
+    metadata_match: bool = False
+
+
+class RagDiagnosticoResponse(BaseModel):
+    pregunta: str
+    consulta_rag: str
+    semana_detectada: Optional[int] = None
+    total_chunks: int
+    contexto_debil: bool
+    chunks: list[RagChunkDiagnostico]
+
+
 class MensajeOut(BaseModel):
     id: str
     pregunta: str

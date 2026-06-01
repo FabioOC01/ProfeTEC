@@ -16,7 +16,7 @@ from app.core.extractor import DocType, extract_pages
 from app.core.firestore_client import get_db
 from app.core.storage import delete_file, upload_file
 from app.core.vertex import embed_texts
-from app.models.documento import DocumentoResponse
+from app.models.documento import CoberturaDocumentosResponse, DocumentoResponse
 
 router = APIRouter(tags=["documentos"])
 logger = logging.getLogger(__name__)
@@ -336,6 +336,67 @@ def listar_documentos(
         data.pop("created_at", None)
         result.append(data)
     return result
+
+
+@router.get(
+    "/cursos/{curso_id}/documentos/cobertura",
+    response_model=CoberturaDocumentosResponse,
+    summary="Cobertura de documentos por semana",
+)
+def cobertura_documentos(
+    curso_id: str,
+    claims: dict = Depends(get_current_user),
+    db=Depends(get_db),
+):
+    uid = claims["uid"]
+    verificar_acceso_curso(curso_id, uid, db)
+
+    docs = (
+        db.collection("documentos")
+        .where("curso_id", "==", curso_id)
+        .stream()
+    )
+    por_semana: dict[int, dict] = {}
+    total_documentos = 0
+    total_chunks = 0
+
+    for d in docs:
+        data = d.to_dict() or {}
+        total_documentos += 1
+        chunks = int(data.get("chunks_count") or 0)
+        paginas = int(data.get("paginas") or 0)
+        total_chunks += chunks
+        try:
+            semana = int(data.get("semana"))
+        except (TypeError, ValueError):
+            continue
+        if not 1 <= semana <= 30:
+            continue
+        item = por_semana.setdefault(
+            semana,
+            {"semana": semana, "documentos": 0, "chunks": 0, "paginas": 0, "nombres": []},
+        )
+        item["documentos"] += 1
+        item["chunks"] += chunks
+        item["paginas"] += paginas
+        nombre = data.get("nombre")
+        if nombre:
+            item["nombres"].append(nombre)
+
+    semanas = [por_semana[k] for k in sorted(por_semana)]
+    semanas_sin_chunks = [
+        item["semana"]
+        for item in semanas
+        if item["chunks"] <= 0
+    ]
+
+    return {
+        "curso_id": curso_id,
+        "total_documentos": total_documentos,
+        "total_chunks": total_chunks,
+        "semanas": semanas,
+        "semanas_sin_chunks": semanas_sin_chunks,
+    }
 
 
 @router.delete(

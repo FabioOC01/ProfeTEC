@@ -15,8 +15,9 @@ import CourseCover, { colorForIndex } from '../../components/ui/CourseCover.jsx'
 
 export default function CursosList() {
   const navigate = useNavigate()
-  const { profile } = useAuth()
-  const isDocente = profile?.rol === 'docente'
+  const { profile, viewMode } = useAuth()
+  const isDocente = viewMode === 'docente'
+  const canManage = profile?.rol === 'docente'
 
   const [cursos, setCursos] = useState([])
   const [loading, setLoading] = useState(true)
@@ -106,7 +107,7 @@ export default function CursosList() {
           eyebrow={isDocente ? 'Tus cursos' : 'Cursos inscritos'}
           title={isDocente ? 'Mis cursos' : 'Mis cursos'}
           action={
-            isDocente && (
+            isDocente && canManage && (
               <button type="button" className="btn btn-primary" onClick={abrirCrear}>
                 <Icon name="plus" size={14} />
                 Nuevo curso
@@ -115,7 +116,7 @@ export default function CursosList() {
           }
         />
 
-        {!isDocente && (
+        {!isDocente && profile?.rol === 'estudiante' && (
           <section className="card" style={s.joinCard}>
             <div style={{ flex: 1, minWidth: 240 }}>
               <div className="t-eyebrow" style={{ marginBottom: 6 }}>Unirme a un curso</div>
@@ -151,16 +152,25 @@ export default function CursosList() {
 
         {error && <p style={s.error}>{error}</p>}
 
+        {isDocente && !canManage && (
+          <p style={s.notice}>
+            Estás viendo la interfaz de docente. Tu rol real es estudiante, por eso las acciones
+            de creación, edición y eliminación permanecen bloqueadas.
+          </p>
+        )}
+
         {loading ? (
           <p className="t-muted">Cargando cursos…</p>
         ) : cursos.length === 0 ? (
           <div className="card" style={s.emptyCard}>
             <p style={{ marginBottom: 14 }}>
               {isDocente
-                ? 'Aún no tienes cursos. Crea uno para empezar a subir material.'
+                ? canManage
+                  ? 'Aún no tienes cursos. Crea uno para empezar a subir material.'
+                  : 'Esta vista muestra cómo se organiza la gestión docente.'
                 : 'Aún no estás inscrito en ningún curso.'}
             </p>
-            {isDocente && (
+            {isDocente && canManage && (
               <button type="button" className="btn btn-primary" onClick={abrirCrear}>
                 Crear primer curso
               </button>
@@ -218,7 +228,7 @@ export default function CursosList() {
                         </>
                       )}
                     </button>
-                    {isDocente && (
+                    {isDocente && canManage && (
                       <>
                         <button
                           type="button"
@@ -332,6 +342,15 @@ const s = {
     marginBottom: 14,
     background: 'rgba(214,90,71,.07)',
     border: '1px solid rgba(214,90,71,.25)',
+    borderRadius: 'var(--r-sm)',
+    padding: '8px 12px',
+  },
+  notice: {
+    color: 'var(--amber-700)',
+    fontSize: 13,
+    marginBottom: 14,
+    background: 'var(--amber-100)',
+    border: '1px solid var(--amber-200)',
     borderRadius: 'var(--r-sm)',
     padding: '8px 12px',
   },

@@ -1,7 +1,14 @@
 """Tests unitarios para utilidades de generación con Gemini."""
 from unittest.mock import patch
 
-from app.core.gemini import es_rendicion, reescribir_consulta
+from app.core.gemini import (
+    _limpiar_citas_duplicadas,
+    es_peticion_practica,
+    es_rendicion,
+    es_seguimiento_contextual,
+    reescribir_consulta,
+    respuesta_social,
+)
 
 
 def test_reescribir_sin_historial_devuelve_pregunta_original():
@@ -58,6 +65,44 @@ def test_reescribir_selectiva_omite_llamada_para_preguntas_largas(mock_gen):
     # La pregunta tiene más de 5 palabras y no contiene términos vagos.
     assert resultado == "¿Cuál es la diferencia entre una oportunidad y una fortaleza en FODA?"
     mock_gen.assert_not_called()
+
+
+@patch("app.core.gemini.generar_texto",
+       return_value="Ejemplo concreto de assessment center en seleccion de personal")
+def test_reescribir_seguimiento_largo_con_ultimo_concepto(mock_gen):
+    """Un seguimiento largo con 'ultimo concepto' tambien debe usar historial."""
+    historial = [{
+        "pregunta": "¿Que es un Assessment Center?",
+        "respuesta": "El assessment center evalua candidatos con situaciones simuladas.",
+    }]
+    resultado = reescribir_consulta("Dame un ejemplo concreto del último concepto", historial)
+    assert resultado == "Ejemplo concreto de assessment center en seleccion de personal"
+    mock_gen.assert_called_once()
+
+
+def test_detecta_seguimientos_contextuales_y_peticiones_practicas():
+    assert es_seguimiento_contextual("Dame un ejemplo concreto del último concepto") is True
+    assert es_seguimiento_contextual("¿Cuál es la definición de empleabilidad?") is False
+    assert es_peticion_practica("Dame tips para mi CB") is True
+    assert es_peticion_practica("Que el reclutador me note") is True
+
+
+def test_limpiar_citas_duplicadas_colapsa_repeticiones():
+    texto = "Tema explicado [📄 doc.pdf, pág. 1] | [📄 doc.pdf, pág. 1]"
+    assert _limpiar_citas_duplicadas(texto) == "Tema explicado [📄 doc.pdf, pág. 1]"
+
+
+def test_respuesta_social_maneja_gracias_sin_rag():
+    assert respuesta_social("gracias", "directo").startswith("De nada")
+    assert "practicando" in respuesta_social("muchas gracias", "socratico")
+    assert respuesta_social("¿Qué es FODA?", "directo") is None
+
+
+def test_respuesta_social_maneja_saludos_identidad_y_funcionamiento():
+    assert respuesta_social("hola", "directo").startswith("Hola")
+    assert "tutor virtual" in respuesta_social("¿Quién eres?", "directo")
+    assert "proyecto ProfeTEC.IA" in respuesta_social("¿Quién te creó?", "directo")
+    assert "documentos subidos" in respuesta_social("¿Cómo funcionas?", "directo")
 
 
 # ── Tests de es_rendicion ─────────────────────────────────────────────────────
