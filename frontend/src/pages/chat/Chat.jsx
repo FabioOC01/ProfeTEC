@@ -38,6 +38,19 @@ function recortarTexto(texto, max = 58) {
   return `${texto.slice(0, max - 1).trim()}…`
 }
 
+// Quita las citas inline [📄 doc, pág. N] que el modelo repite en el texto.
+// Las fuentes ya se muestran deduplicadas en la fila "Fuentes:" al final del
+// mensaje (desde chunks_usados), así que en el cuerpo solo estorban.
+function limpiarCitasInline(texto) {
+  if (!texto) return texto
+  return texto
+    .replace(/\s*\[📄[^\]]*\]/g, '') // elimina la cita y el espacio previo
+    .replace(/[ \t]+([.,;:])/g, '$1') // junta puntuación que quedó separada
+    .replace(/[ \t]{2,}/g, ' ') // colapsa espacios dobles
+    .replace(/[ \t]+\n/g, '\n') // limpia espacios al final de línea
+    .trim()
+}
+
 function sugerenciasDesdeDocumentos(documentos = []) {
   const docs = [...documentos]
     .filter((doc) => doc?.nombre && (doc.chunks_count ?? 0) > 0)
@@ -799,7 +812,7 @@ function MessageGroup({ msg, onCite, onFeedback, activeChunk }) {
           >
             {msg.respuesta ? (
               <>
-                {msg.respuesta}
+                {limpiarCitasInline(msg.respuesta)}
                 {isStreaming && <span className="stream-cursor" aria-hidden="true" />}
               </>
             ) : isStreaming ? (
