@@ -38,7 +38,7 @@ export default function Navbar({ breadcrumb }) {
 
   return (
     <header style={s.nav}>
-      <div style={s.container}>
+      <div style={s.container} className="nav-container">
         {/* Logo */}
         <button
           type="button"
@@ -75,14 +75,14 @@ export default function Navbar({ breadcrumb }) {
         </nav>
 
         <div style={{ flex: 1, display: 'flex', justifyContent: 'center', minWidth: 0 }}>
-          {breadcrumb && <div style={s.breadcrumb}>{breadcrumb}</div>}
+          {breadcrumb && <div style={s.breadcrumb} className="nav-breadcrumb">{breadcrumb}</div>}
         </div>
 
         {/* Right */}
         <div style={s.right}>
           {realRole && (
             <span
-              className={isDocente ? 'chip chip-lav' : 'chip chip-mint'}
+              className={`${isDocente ? 'chip chip-lav' : 'chip chip-mint'} nav-rolchip`}
               style={s.rolChip}
             >
               Vista {isDocente ? 'docente' : 'estudiante'}
@@ -90,7 +90,7 @@ export default function Navbar({ breadcrumb }) {
           )}
 
           {realRole && (
-            <div style={s.viewToggle} role="group" aria-label="Cambiar vista">
+            <div style={s.viewToggle} role="group" aria-label="Cambiar vista" className="nav-viewtoggle">
               <button
                 type="button"
                 onClick={() => setViewMode('estudiante')}
@@ -128,7 +128,7 @@ export default function Navbar({ breadcrumb }) {
               ) : (
                 <span style={s.avatarFallback}>{inicial}</span>
               )}
-              <span style={s.userNombre}>{firstName}</span>
+              <span style={s.userNombre} className="nav-username">{firstName}</span>
             </button>
 
             {menuAbierto && (
@@ -205,8 +205,22 @@ export default function Navbar({ breadcrumb }) {
       </div>
 
       <style>{`
+        /* Tablet / móvil grande: íconos sin texto y sin controles redundantes
+           (el cambio de vista sigue disponible en el menú del avatar). */
         @media (max-width: 760px) {
           .nav-items .nav-label { display: none; }
+          .nav-rolchip { display: none !important; }
+          .nav-viewtoggle { display: none !important; }
+        }
+        /* Móvil: avatar sin nombre, sin breadcrumb y márgenes compactos. */
+        @media (max-width: 600px) {
+          .nav-container { padding: 0 14px !important; gap: 8px !important; }
+          .nav-items { margin-left: 4px !important; gap: 2px !important; }
+          .nav-username { display: none !important; }
+          .nav-breadcrumb { display: none !important; }
+        }
+        @media (max-width: 380px) {
+          .nav-container { padding: 0 10px !important; }
         }
       `}</style>
     </header>

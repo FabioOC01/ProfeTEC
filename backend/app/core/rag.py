@@ -132,12 +132,17 @@ def recuperar_chunks(
     top_k: int | None = None,
     score_minimo: float | None = None,
     max_chunks_scan: int | None = None,
+    ignorar_semana: bool = False,
 ) -> list[dict]:
     """
     Genera el embedding de la pregunta y retorna los chunks mas relevantes.
 
     Backend actual: `firestore_scan` o `bigquery_vector`, con fallback a Firestore
     si BigQuery no esta disponible para no romper la demo.
+
+    `ignorar_semana=True` desactiva el filtro por semana aunque la pregunta la
+    mencione: busca por similitud en todo el curso. Se usa para sugerir el
+    material mas parecido cuando la semana pedida no tiene contenido indexado.
     """
     resolved_top_k = top_k if top_k is not None else settings.rag_top_k
     resolved_score_minimo = (
@@ -146,7 +151,7 @@ def recuperar_chunks(
     resolved_max_chunks_scan = (
         max_chunks_scan if max_chunks_scan is not None else settings.rag_max_chunks_scan
     )
-    semana = detectar_semana(pregunta)
+    semana = None if ignorar_semana else detectar_semana(pregunta)
     if semana is not None and top_k is None:
         resolved_top_k = max(resolved_top_k, 5)
 

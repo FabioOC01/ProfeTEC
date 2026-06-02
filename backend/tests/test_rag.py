@@ -162,6 +162,30 @@ def test_recuperar_chunks_filtra_por_semana_y_relaja_score(mock_cos, mock_embed,
 
 
 @patch("app.core.rag.embed_texts")
+@patch("app.core.rag.cosine_similarity")
+def test_recuperar_chunks_ignorar_semana_no_filtra(mock_cos, mock_embed, monkeypatch):
+    """Con ignorar_semana=True se busca por similitud en todo el curso aunque la
+    pregunta mencione una semana (para sugerir lo más parecido)."""
+    monkeypatch.setattr("app.core.rag.settings.rag_backend", "firestore_scan")
+    mock_embed.return_value = [[0.1, 0.2, 0.3]]
+    mock_cos.side_effect = [0.9, 0.8]
+
+    db, _query = _make_db_with_chunks([
+        _make_chunk_doc("Semana 1", semana=1),
+        _make_chunk_doc("Semana 3", semana=3),
+    ])
+
+    from app.core.rag import recuperar_chunks
+
+    result = recuperar_chunks(
+        "curso1", "resumen de la semana 4", db,
+        top_k=5, score_minimo=0.0, ignorar_semana=True,
+    )
+
+    assert [r["texto"] for r in result] == ["Semana 1", "Semana 3"]
+
+
+@patch("app.core.rag.embed_texts")
 @patch("app.core.bigquery_rag.search_chunks")
 def test_recuperar_chunks_usa_bigquery_vector(mock_search, mock_embed, monkeypatch):
     mock_embed.return_value = [[0.1, 0.2, 0.3]]

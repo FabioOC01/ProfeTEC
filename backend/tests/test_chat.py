@@ -601,20 +601,90 @@ def test_chat_busca_con_consulta_reescrita(mock_gen, mock_rag, mock_reescribir):
 @patch("app.routers.chat.recuperar_chunks", return_value=[])
 @patch("app.routers.chat.generar_respuesta", return_value="Las oportunidades y amenazas.")
 def test_chat_rendicion_pasa_flag_a_gemini(mock_gen, mock_rag, mock_reescribir):
-    """Cuando el estudiante se rinde en socrático, generar_respuesta recibe rendicion=True."""
-    db = _mock_db_chat(rol_usuario="estudiante")
+    """En socrático, si el estudiante se rinde TRAS un turno previo,
+    generar_respuesta recibe rendicion=True."""
+    class _TS:
+        def __init__(self, t):
+            self._t = t
+
+        def timestamp(self):
+            return self._t
+
+    db = MagicMock()
+    curso_doc = MagicMock()
+    curso_doc.exists = True
+    curso_doc.to_dict.return_value = {"nombre": "Curso", "docente_id": "docente_uid", "activo": True}
+    user_doc = MagicMock()
+    user_doc.exists = True
+    user_doc.to_dict.return_value = {"rol": "estudiante", "nombre": "Test"}
+    matricula_doc = MagicMock()
+    matricula_doc.exists = True
+
+    conv_ref = MagicMock()
+    conv_ref.id = "conv-rend"
+    conv_doc = MagicMock()
+    conv_doc.exists = True
+    conv_doc.to_dict.return_value = {"curso_id": "curso1", "usuario_id": "estudiante_uid"}
+    conv_ref.get.return_value = conv_doc
+
+    msg_prev = MagicMock()
+    msg_prev.to_dict.return_value = {
+        "pregunta": "¿Qué es FODA?", "respuesta": "¿Qué dimensiones conoces?",
+        "usuario_id": "estudiante_uid", "creado_en": _TS(10.0),
+    }
+    msg_ref = MagicMock()
+    msg_ref.id = "msg-nuevo"
+    mensajes_col = MagicMock()
+    mensajes_col.where.return_value.stream.return_value = [msg_prev]
+    mensajes_col.add.return_value = (None, msg_ref)
+
+    def _col(name):
+        col = MagicMock()
+        dr = MagicMock()
+        if name == "cursos":
+            dr.get.return_value = curso_doc
+            col.document.return_value = dr
+        elif name == "usuarios":
+            dr.get.return_value = user_doc
+            col.document.return_value = dr
+        elif name == "matriculas":
+            dr.get.return_value = matricula_doc
+            col.document.return_value = dr
+        elif name == "conversaciones":
+            col.document.return_value = conv_ref
+        elif name == "mensajes":
+            return mensajes_col
+        return col
+
+    db.collection.side_effect = _col
     app.dependency_overrides[get_current_user] = lambda: {"uid": "estudiante_uid"}
     app.dependency_overrides[get_db] = lambda: db
     with TestClient(app) as client:
         resp = client.post(
             "/cursos/curso1/chat",
-            json={"pregunta": "no lo sé", "modo": "socratico"},
+            json={"pregunta": "no lo sé", "conversacion_id": "conv-rend", "modo": "socratico"},
         )
     app.dependency_overrides.clear()
 
     assert resp.status_code == 200
     _, _, _, _, rendicion, _ = mock_gen.call_args.args
     assert rendicion is True
+
+
+@patch("app.routers.chat.reescribir_consulta", side_effect=lambda p, h: p)
+@patch("app.routers.chat.recuperar_chunks", return_value=[])
+@patch("app.routers.chat.generar_respuesta", return_value="¿Qué dimensiones del FODA conoces?")
+def test_chat_no_rendicion_en_primer_turno(mock_gen, mock_rag, mock_reescribir, client_estudiante):
+    """Un primer mensaje 'no lo sé, ayúdame' en socrático NO es rendición:
+    debe guiarse con preguntas, no entregar la respuesta completa."""
+    resp = client_estudiante.post(
+        "/cursos/curso1/chat",
+        json={"pregunta": "no lo sé, ayúdame", "modo": "socratico"},
+    )
+
+    assert resp.status_code == 200
+    _, _, _, _, rendicion, _ = mock_gen.call_args.args
+    assert rendicion is False
 
 
 @patch("app.routers.chat.reescribir_consulta", side_effect=lambda p, h: p)
@@ -920,6 +990,129 @@ def test_chat_no_usa_fallback_historial_para_semana_explicita(
     assert data["chunks_usados"] == []
     assert "semana 11" in data["respuesta"]
     mock_gen.assert_not_called()
+
+
+@patch("app.routers.chat.reescribir_consulta", side_effect=lambda p, h: p)
+@patch("app.routers.chat.recuperar_chunks", return_value=[
+    {"documento_id": "d1", "nombre_doc": "CV.pdf", "pagina": 2,
+     "texto": "Factores de empleabilidad...", "score": 0.5},
+])
+@patch("app.routers.chat.generar_respuesta", return_value="Prueba la técnica Pomodoro...")
+def test_chat_consulta_estudio_ignora_material_debil(
+    mock_gen, mock_rag, mock_reescribir, client_estudiante
+):
+    """Una pregunta de método de estudio con material débil se responde como
+    consejo general: generar_respuesta recibe chunks=[] (ruta sin material)."""
+    resp = client_estudiante.post(
+        "/cursos/curso1/chat",
+        json={"pregunta": "¿cómo me concentro mejor para estudiar?"},
+    )
+
+    assert resp.status_code == 200
+    assert mock_gen.call_args.args[1] == []
+    assert resp.json()["chunks_usados"] == []
+
+
+@patch("app.routers.chat.reescribir_consulta", side_effect=lambda p, h: p)
+@patch("app.routers.chat.recuperar_chunks")
+@patch("app.routers.chat.generar_respuesta",
+       return_value="Resumen del tema parecido. [📄 CV.pdf, pág. 3]")
+def test_chat_semana_sin_material_responde_con_similar(
+    mock_gen, mock_rag, mock_reescribir, client_estudiante
+):
+    """Si la semana pedida no tiene material, el tutor responde con lo más
+    parecido del curso, anteponiendo un aviso de redirección."""
+    # 1ª búsqueda (filtrada por semana) vacía; 2ª (ignorar_semana) trae similar.
+    mock_rag.side_effect = [
+        [],
+        [{"documento_id": "d9", "nombre_doc": "CV.pdf", "pagina": 3,
+          "texto": "Contenido parecido", "score": 0.7, "semana": 2}],
+    ]
+
+    resp = client_estudiante.post(
+        "/cursos/curso1/chat",
+        json={"pregunta": "dame un resumen de la semana 4"},
+    )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "semana 4" in data["respuesta"]
+    assert "lo más parecido" in data["respuesta"]
+    assert data["respuesta"].strip().endswith("[📄 CV.pdf, pág. 3]")
+    assert data["chunks_usados"][0]["nombre_doc"] == "CV.pdf"
+    assert mock_rag.call_count == 2
+    assert mock_rag.call_args.kwargs.get("ignorar_semana") is True
+
+
+def _db_para_borrar_conv(usuario_id_conv="estudiante_uid", mensajes=None):
+    db = MagicMock()
+    curso_doc = MagicMock()
+    curso_doc.exists = True
+    curso_doc.to_dict.return_value = {"nombre": "Curso", "docente_id": "docente_uid", "activo": True}
+    user_doc = MagicMock()
+    user_doc.exists = True
+    user_doc.to_dict.return_value = {"rol": "estudiante", "nombre": "Test"}
+    matricula_doc = MagicMock()
+    matricula_doc.exists = True
+
+    conv_ref = MagicMock()
+    conv_ref.id = "conv-x"
+    conv_doc = MagicMock()
+    conv_doc.exists = True
+    conv_doc.to_dict.return_value = {"curso_id": "curso1", "usuario_id": usuario_id_conv}
+    conv_ref.get.return_value = conv_doc
+
+    batch = MagicMock()
+    db.batch.return_value = batch
+
+    mensajes_col = MagicMock()
+    mensajes_col.where.return_value.stream.return_value = mensajes or []
+
+    def _col(name):
+        col = MagicMock()
+        dr = MagicMock()
+        if name == "cursos":
+            dr.get.return_value = curso_doc
+            col.document.return_value = dr
+        elif name == "usuarios":
+            dr.get.return_value = user_doc
+            col.document.return_value = dr
+        elif name == "matriculas":
+            dr.get.return_value = matricula_doc
+            col.document.return_value = dr
+        elif name == "conversaciones":
+            col.document.return_value = conv_ref
+        elif name == "mensajes":
+            return mensajes_col
+        return col
+
+    db.collection.side_effect = _col
+    return db, conv_ref, batch
+
+
+def test_eliminar_conversacion_borra_hilo_y_mensajes():
+    db, conv_ref, batch = _db_para_borrar_conv(mensajes=[MagicMock(), MagicMock()])
+    app.dependency_overrides[get_current_user] = lambda: {"uid": "estudiante_uid"}
+    app.dependency_overrides[get_db] = lambda: db
+    with TestClient(app) as client:
+        resp = client.delete("/cursos/curso1/conversaciones/conv-x")
+    app.dependency_overrides.clear()
+
+    assert resp.status_code == 204
+    assert batch.delete.call_count == 2  # un delete por mensaje
+    conv_ref.delete.assert_called_once()  # se borra la conversación
+
+
+def test_eliminar_conversacion_ajena_es_403():
+    db, conv_ref, _batch = _db_para_borrar_conv(usuario_id_conv="otro_uid")
+    app.dependency_overrides[get_current_user] = lambda: {"uid": "estudiante_uid"}
+    app.dependency_overrides[get_db] = lambda: db
+    with TestClient(app) as client:
+        resp = client.delete("/cursos/curso1/conversaciones/conv-x")
+    app.dependency_overrides.clear()
+
+    assert resp.status_code == 403
+    conv_ref.delete.assert_not_called()
 
 
 @patch("app.routers.chat.recuperar_chunks", return_value=[

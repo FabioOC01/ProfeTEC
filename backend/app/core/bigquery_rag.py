@@ -46,11 +46,64 @@ CLUSTER BY curso_id, documento_id
 
 def create_vector_index_sql() -> str:
     table = _table_id()
+    # STORING (curso_id, semana) permite que el pre-filtro de search_chunks
+    # use el indice IVF en lugar de caer a fuerza bruta sobre toda la tabla.
+    # (Requiere >= 5000 filas para que BigQuery construya/use el indice.)
     return f"""
 CREATE VECTOR INDEX IF NOT EXISTS {VECTOR_INDEX_NAME}
 ON `{table}`(embedding)
+STORING (curso_id, semana)
 OPTIONS(distance_type = 'COSINE', index_type = 'IVF')
 """.strip()
+
+
+def drop_vector_index_sql() -> str:
+    table = _table_id()
+    return f"DROP VECTOR INDEX IF EXISTS {VECTOR_INDEX_NAME} ON `{table}`"
+
+
+def ensure_dataset(client=None) -> None:
+    """Crea el dataset en la location configurada si aun no existe."""
+    from google.cloud import bigquery
+
+    active_client = client or _get_client()
+    project = (
+        settings.gcp_project_id
+        or settings.firebase_project_id
+        or active_client.project
+    )
+    dataset = bigquery.Dataset(f"{project}.{settings.bigquery_dataset}")
+    dataset.location = settings.bigquery_location
+    active_client.create_dataset(dataset, exists_ok=True)
+
+
+def ensure_schema(recreate_index: bool = False) -> None:
+    """Crea dataset + tabla + indice vectorial de forma idempotente.
+
+    `recreate_index=True` dropea el indice existente antes de recrearlo; usalo
+    una vez para migrar un indice antiguo creado sin `STORING (curso_id, semana)`,
+    ya que `CREATE VECTOR INDEX IF NOT EXISTS` no recrea uno que ya existe.
+    """
+    client = _get_client()
+    ensure_dataset(client)
+    client.query(create_table_sql()).result()
+    if recreate_index:
+        logger.info("Dropeando indice vectorial existente para recrearlo.")
+        client.query(drop_vector_index_sql()).result()
+    try:
+        client.query(create_vector_index_sql()).result()
+        logger.info("Esquema BigQuery del RAG listo (dataset, tabla, indice).")
+    except Exception as exc:
+        # BigQuery exige >= 5000 filas para crear un indice IVF. Con menos,
+        # VECTOR_SEARCH funciona igual (fuerza bruta); no es un fallo fatal.
+        if "min allowed 5000" in str(exc):
+            logger.warning(
+                "Indice vectorial no creado: la tabla tiene <5000 filas. "
+                "VECTOR_SEARCH seguira funcionando por fuerza bruta. "
+                "Re-ejecuta este script cuando la tabla crezca."
+            )
+        else:
+            raise
 
 
 def build_chunk_rows(
@@ -85,10 +138,21 @@ def build_chunk_rows(
 def insert_chunk_rows(rows: list[dict]) -> None:
     if not rows:
         return
+    from google.cloud import bigquery
+
+    # Usamos un load job (no streaming insert): es gratis, las filas quedan
+    # disponibles en almacenamiento de inmediato y se pueden borrar al instante.
+    # El streaming buffer bloquea DELETE ~30-90 min, lo que rompia el reemplazo
+    # de documentos (delete_chunks_for_document) dejando chunks duplicados.
     client = _get_client()
-    errors = client.insert_rows_json(_table_id(client), rows)
-    if errors:
-        raise RuntimeError(f"BigQuery insert_rows_json returned errors: {errors}")
+    job_config = bigquery.LoadJobConfig(
+        source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
+        write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+    )
+    job = client.load_table_from_json(rows, _table_id(client), job_config=job_config)
+    job.result()
+    if job.errors:
+        raise RuntimeError(f"BigQuery load job returned errors: {job.errors}")
 
 
 def delete_chunks_for_document(doc_id: str) -> None:

@@ -14,6 +14,7 @@ from app.core.access import verificar_acceso_curso
 from app.core.auth import get_current_user
 from app.core.firestore_client import get_db
 from app.core.gemini import (
+    es_consulta_de_estudio,
     es_rendicion,
     es_seguimiento_contextual,
     generar_respuesta,
@@ -156,12 +157,18 @@ def _chunks_fallback_historial(conv_id: str, db) -> list[dict]:
     ]
 
 
-def _flags_rag(chunks: list[dict], modo: str, pregunta: str) -> tuple[bool, bool]:
+def _flags_rag(
+    chunks: list[dict], modo: str, pregunta: str, historial: list[dict] | None = None
+) -> tuple[bool, bool]:
     """Devuelve (rendicion, contexto_debil).
     rendicion: el estudiante se rindió en modo socrático.
     contexto_debil: el mejor score del RAG está por debajo del umbral de confianza.
+
+    La rendición solo aplica si YA hubo turnos previos: en socrático, un primer
+    mensaje como "no entiendo, ayúdame" es una petición de empezar, no una
+    rendición — debe guiarse con preguntas, no entregar la respuesta completa.
     """
-    rendicion = modo == "socratico" and es_rendicion(pregunta)
+    rendicion = modo == "socratico" and bool(historial) and es_rendicion(pregunta)
     if not chunks:
         return rendicion, False
     score_max = max(c.get("score", 0.0) for c in chunks)
@@ -208,10 +215,53 @@ def _aplicar_fallback_contextual(
     return chunks
 
 
-def _respuesta_sin_material_semana(semana: int) -> str:
+def _semanas_disponibles(curso_id: str, db) -> list[int]:
+    """Semanas del curso que tienen al menos un documento con chunks.
+    Defensivo: ante cualquier fallo devuelve [] (el chat nunca debe romperse)."""
+    try:
+        docs = db.collection("documentos").where("curso_id", "==", curso_id).stream()
+        semanas: set[int] = set()
+        for d in docs:
+            data = d.to_dict() or {}
+            semana = data.get("semana")
+            if semana is None or data.get("chunks_count", 1) <= 0:
+                continue
+            try:
+                semanas.add(int(semana))
+            except (TypeError, ValueError):
+                continue
+        return sorted(semanas)
+    except Exception:
+        return []
+
+
+def _aviso_semana_sin_material(semana: int, chunks: list[dict]) -> str:
+    """Nota que se antepone cuando respondemos con material de otra semana."""
+    top = chunks[0] if chunks else {}
+    doc = top.get("nombre_doc") or "el material del curso"
+    origen = f'"{doc}"'
+    semana_origen = top.get("semana")
+    if semana_origen:
+        origen += f" (semana {semana_origen})"
     return (
-        f"No encontré material indexado para la semana {semana}. "
-        "Revisa si el documento fue subido con esa semana y si tiene chunks generados."
+        f"ℹ️ Aún no tengo material etiquetado para la semana {semana}. "
+        f"Te muestro lo más parecido que encontré en {origen}:\n\n"
+    )
+
+
+def _respuesta_sin_material_semana(
+    semana: int, semanas_disponibles: list[int] | None = None
+) -> str:
+    base = f"Aún no encuentro material para la semana {semana}."
+    if semanas_disponibles:
+        lista = ", ".join(str(s) for s in semanas_disponibles)
+        return (
+            f"{base} En este curso tengo material de las semanas {lista}. "
+            "Dime sobre cuál quieres que te ayude o reformula tu pregunta."
+        )
+    return (
+        f"{base} Dime sobre qué tema quieres que te ayude y lo busco en el "
+        "material del curso."
     )
 
 
@@ -272,17 +322,35 @@ def chat_con_tutor(
     # Fallback: si es seguimiento y la busqueda sale vacia o debil, reutilizamos
     # los chunks del turno anterior (mismo tema, evita respuestas fuera de hilo).
     chunks = _aplicar_fallback_contextual(chunks, conv_id, db, es_nueva, body.pregunta)
+
+    # Consultas de método de estudio/bienestar: si el material no las cubre bien,
+    # respóndelas como consejo general en vez de forzar una respuesta del material.
+    if es_consulta_de_estudio(body.pregunta) and _chunks_son_debiles(chunks):
+        chunks = []
+
     semana_detectada = detectar_semana(body.pregunta)
 
-    rendicion, contexto_debil = _flags_rag(chunks, body.modo, body.pregunta)
+    # Si pidió una semana sin material, buscamos lo más parecido en todo el curso
+    # (sin filtro de semana) para redirigir en vez de cortar la conversación.
+    aviso_semana = ""
+    if semana_detectada is not None and not chunks:
+        chunks = recuperar_chunks(curso_id, consulta_rag, db, ignorar_semana=True)
+        if chunks:
+            aviso_semana = _aviso_semana_sin_material(semana_detectada, chunks)
+
+    rendicion, contexto_debil = _flags_rag(chunks, body.modo, body.pregunta, historial)
 
     # ── 3. Generar respuesta con Gemini (con memoria del diálogo) ────────────
     if semana_detectada is not None and not chunks:
-        respuesta = _respuesta_sin_material_semana(semana_detectada)
+        respuesta = _respuesta_sin_material_semana(
+            semana_detectada, _semanas_disponibles(curso_id, db)
+        )
     else:
         respuesta = generar_respuesta(
             body.pregunta, chunks, body.modo, historial, rendicion, contexto_debil
         )
+        if aviso_semana:
+            respuesta = aviso_semana + respuesta
 
     # ── 4. Guardar mensaje ────────────────────────────────────────────────────
     ahora = datetime.now(timezone.utc)
@@ -375,9 +443,19 @@ def chat_con_tutor_stream(
             chunks = recuperar_chunks(curso_id, consulta_rag, db)
 
             chunks = _aplicar_fallback_contextual(chunks, conv_id, db, es_nueva, body.pregunta)
+
+            if es_consulta_de_estudio(body.pregunta) and _chunks_son_debiles(chunks):
+                chunks = []
+
             semana_detectada = detectar_semana(body.pregunta)
 
-            rendicion, contexto_debil = _flags_rag(chunks, body.modo, body.pregunta)
+            aviso_semana = ""
+            if semana_detectada is not None and not chunks:
+                chunks = recuperar_chunks(curso_id, consulta_rag, db, ignorar_semana=True)
+                if chunks:
+                    aviso_semana = _aviso_semana_sin_material(semana_detectada, chunks)
+
+            rendicion, contexto_debil = _flags_rag(chunks, body.modo, body.pregunta, historial)
             chunks_citados = _chunks_citados(chunks)
             yield _sse_event("meta", {
                 "conversacion_id": conv_id,
@@ -387,10 +465,15 @@ def chat_con_tutor_stream(
 
             yield _sse_event("status", {"stage": "generating"})
             if semana_detectada is not None and not chunks:
-                respuesta_sin_material = _respuesta_sin_material_semana(semana_detectada)
+                respuesta_sin_material = _respuesta_sin_material_semana(
+                    semana_detectada, _semanas_disponibles(curso_id, db)
+                )
                 respuesta_partes.append(respuesta_sin_material)
                 yield _sse_event("delta", {"text": respuesta_sin_material})
             else:
+                if aviso_semana:
+                    respuesta_partes.append(aviso_semana)
+                    yield _sse_event("delta", {"text": aviso_semana})
                 for delta in generar_respuesta_stream(
                     body.pregunta, chunks, body.modo, historial, rendicion, contexto_debil
                 ):
@@ -534,6 +617,58 @@ def listar_conversaciones(
         ))
 
     return sorted(result, key=lambda x: x.actualizado_en, reverse=True)
+
+
+@router.delete(
+    "/cursos/{curso_id}/conversaciones/{conversacion_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Eliminar una conversación del usuario y sus mensajes",
+)
+def eliminar_conversacion(
+    curso_id: str,
+    conversacion_id: str,
+    claims: dict = Depends(get_current_user),
+    db=Depends(get_db),
+):
+    """Borra el hilo de chat (conversación + sus mensajes) del usuario.
+
+    NO toca documentos ni chunks del curso: solo desaparece este historial.
+    Verifica que la conversación pertenezca al usuario antes de borrar.
+    """
+    uid = claims["uid"]
+    verificar_acceso_curso(curso_id, uid, db)
+
+    conv_ref = db.collection("conversaciones").document(conversacion_id)
+    conv_doc = conv_ref.get()
+    if not conv_doc.exists:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Conversacion no encontrada."
+        )
+    data = conv_doc.to_dict() or {}
+    if data.get("usuario_id") != uid or data.get("curso_id") != curso_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="No tienes acceso a esta conversacion.",
+        )
+
+    # Borra los mensajes del hilo en lotes y luego la conversación.
+    mensajes = (
+        db.collection("mensajes").where("conversacion_id", "==", conversacion_id).stream()
+    )
+    batch = db.batch()
+    operaciones = 0
+    for m in mensajes:
+        batch.delete(m.reference)
+        operaciones += 1
+        if operaciones >= 450:
+            batch.commit()
+            batch = db.batch()
+            operaciones = 0
+    if operaciones:
+        batch.commit()
+
+    conv_ref.delete()
+    return None
 
 
 @router.patch(

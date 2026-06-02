@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { getCurso, getCursos } from '../../api/cursos.js'
 import { getDocumentos } from '../../api/documentos.js'
 import {
+  eliminarConversacion,
   enviarFeedback,
   enviarPregunta,
   enviarPreguntaStream,
@@ -13,6 +14,7 @@ import Navbar from '../../components/Navbar.jsx'
 import TutorBlob from '../../components/ui/TutorBlob.jsx'
 import Icon from '../../components/ui/Icon.jsx'
 import CitationPopover from '../../components/ui/CitationPopover.jsx'
+import Markdown from '../../components/ui/Markdown.jsx'
 import { colorForIndex } from '../../components/ui/CourseCover.jsx'
 
 const FALLBACK_SUGGESTIONS = [
@@ -264,6 +266,27 @@ export default function Chat() {
     draftRef.current?.focus()
   }
 
+  const eliminarConv = async (convId) => {
+    if (enviando) return
+    const ok = window.confirm(
+      '¿Eliminar esta conversación? Se borrará este historial de chat. ' +
+        'El material del curso no se ve afectado.',
+    )
+    if (!ok) return
+    try {
+      await eliminarConversacion(cursoId, convId)
+      setConversaciones((prev) => prev.filter((c) => c.id !== convId))
+      if (convId === conversacionId) {
+        stopTypingQueue()
+        setConversacionId(null)
+        setMensajes([])
+        setPopover(null)
+      }
+    } catch (e) {
+      setError(e.response?.data?.detail || e.message)
+    }
+  }
+
   // Autoscroll to bottom on new messages
   useEffect(() => {
     if (scrollRef.current) {
@@ -386,6 +409,7 @@ export default function Chat() {
           conversacionId={conversacionId}
           onSelectConversacion={selectConversacion}
           onNuevoChat={nuevoChat}
+          onEliminarConversacion={eliminarConv}
         />
 
         <main style={s.main}>
@@ -567,33 +591,44 @@ function ChatSidebar({
   conversacionId,
   onSelectConversacion,
   onNuevoChat,
+  onEliminarConversacion,
 }) {
+  const [openCursos, setOpenCursos] = useState(false)
+  const activeCurso = cursos.find((c) => c.id === activeId)
+  const otros = cursos.filter((c) => c.id !== activeId)
+
+  const barColor = (c) => {
+    const color = colorForIndex(cursos.findIndex((x) => x.id === c.id))
+    return color === 'amber'
+      ? 'var(--amber-500)'
+      : color === 'mint'
+        ? 'var(--mint-500)'
+        : 'var(--lav-500)'
+  }
+
   return (
     <aside className="chat-sidebar" style={s.sidebar}>
       <div style={{ padding: '16px 14px 6px' }}>
-        <div className="t-eyebrow" style={{ marginBottom: 10 }}>Mis cursos</div>
-        {cursos.length === 0 && (
+        <div className="t-eyebrow" style={{ marginBottom: 10 }}>Curso actual</div>
+        {cursos.length === 0 ? (
           <p className="t-tiny t-muted">Aún no estás en ningún curso.</p>
-        )}
-        {cursos.map((c, i) => {
-          const color = colorForIndex(i)
-          const active = c.id === activeId
-          return (
+        ) : (
+          <div style={{ position: 'relative' }}>
             <button
-              key={c.id}
               type="button"
-              onClick={() => onPick(c.id)}
+              onClick={() => setOpenCursos((o) => !o)}
+              title="Cambiar de curso"
+              aria-expanded={openCursos}
               style={{
                 display: 'flex',
                 alignItems: 'center',
                 gap: 10,
                 width: '100%',
                 padding: '8px 10px',
-                background: active ? 'var(--paper-2)' : 'transparent',
-                border: '1px solid ' + (active ? 'var(--ink-100)' : 'transparent'),
+                background: 'var(--paper-2)',
+                border: '1px solid var(--ink-100)',
                 borderRadius: 10,
                 textAlign: 'left',
-                marginBottom: 4,
                 cursor: 'pointer',
                 color: 'var(--ink-900)',
               }}
@@ -603,34 +638,120 @@ function ChatSidebar({
                   width: 6,
                   height: 36,
                   borderRadius: 4,
-                  background:
-                    color === 'amber'
-                      ? 'var(--amber-500)'
-                      : color === 'mint'
-                        ? 'var(--mint-500)'
-                        : 'var(--lav-500)',
+                  background: activeCurso ? barColor(activeCurso) : 'var(--ink-100)',
                   flex: 'none',
                 }}
               />
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div className="t-mono t-tiny" style={{ color: 'var(--ink-500)' }}>
-                  {c.codigo}
+                  {activeCurso?.codigo || '—'}
                 </div>
                 <div
                   style={{
                     fontSize: 13,
-                    fontWeight: active ? 500 : 400,
+                    fontWeight: 500,
                     whiteSpace: 'nowrap',
                     overflow: 'hidden',
                     textOverflow: 'ellipsis',
                   }}
                 >
-                  {c.nombre}
+                  {activeCurso?.nombre || 'Selecciona un curso'}
                 </div>
               </div>
+              <span
+                style={{
+                  flex: 'none',
+                  color: 'var(--ink-500)',
+                  fontSize: 12,
+                  transition: 'transform .15s ease',
+                  transform: openCursos ? 'rotate(180deg)' : 'none',
+                }}
+              >
+                ▾
+              </span>
             </button>
-          )
-        })}
+
+            {openCursos && (
+              <div
+                style={{
+                  position: 'absolute',
+                  top: 'calc(100% + 4px)',
+                  left: 0,
+                  right: 0,
+                  background: 'var(--surface)',
+                  border: '1px solid var(--ink-100)',
+                  borderRadius: 10,
+                  boxShadow: 'var(--sh-1)',
+                  padding: 4,
+                  zIndex: 20,
+                  maxHeight: 280,
+                  overflowY: 'auto',
+                }}
+              >
+                {otros.length === 0 ? (
+                  <p className="t-tiny t-muted" style={{ padding: '8px' }}>
+                    No tienes otros cursos.
+                  </p>
+                ) : (
+                  otros.map((c) => (
+                    <button
+                      key={c.id}
+                      type="button"
+                      onClick={() => {
+                        setOpenCursos(false)
+                        onPick(c.id)
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.background = 'var(--paper-2)'
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.background = 'transparent'
+                      }}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 10,
+                        width: '100%',
+                        padding: '8px 10px',
+                        background: 'transparent',
+                        border: '1px solid transparent',
+                        borderRadius: 8,
+                        textAlign: 'left',
+                        cursor: 'pointer',
+                        color: 'var(--ink-900)',
+                      }}
+                    >
+                      <div
+                        style={{
+                          width: 6,
+                          height: 32,
+                          borderRadius: 4,
+                          background: barColor(c),
+                          flex: 'none',
+                        }}
+                      />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div className="t-mono t-tiny" style={{ color: 'var(--ink-500)' }}>
+                          {c.codigo}
+                        </div>
+                        <div
+                          style={{
+                            fontSize: 13,
+                            whiteSpace: 'nowrap',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                          }}
+                        >
+                          {c.nombre}
+                        </div>
+                      </div>
+                    </button>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       <div style={{ borderTop: '1px solid var(--ink-100)', padding: '12px 14px', flex: 1, minHeight: 0, overflowY: 'auto' }}>
@@ -659,36 +780,48 @@ function ChatSidebar({
           conversaciones.map((conv) => {
             const active = conv.id === conversacionId
             return (
-              <button
-                key={conv.id}
-                type="button"
-                onClick={() => onSelectConversacion(conv.id)}
-                style={{
-                  display: 'block',
-                  width: '100%',
-                  textAlign: 'left',
-                  padding: '8px 10px',
-                  borderRadius: 8,
-                  border: '1px solid ' + (active ? 'var(--amber-200)' : 'transparent'),
-                  background: active ? 'var(--amber-100)' : 'transparent',
-                  cursor: 'pointer',
-                  marginBottom: 2,
-                }}
-                title={conv.titulo}
-              >
-                <div
+              <div key={conv.id} className="conv-row" style={{ marginBottom: 2 }}>
+                <button
+                  type="button"
+                  onClick={() => onSelectConversacion(conv.id)}
                   style={{
-                    fontSize: 13,
-                    fontWeight: active ? 500 : 400,
-                    color: active ? 'var(--amber-700)' : 'var(--ink-700)',
-                    overflow: 'hidden',
-                    whiteSpace: 'nowrap',
-                    textOverflow: 'ellipsis',
+                    display: 'block',
+                    width: '100%',
+                    textAlign: 'left',
+                    padding: '8px 32px 8px 10px',
+                    borderRadius: 8,
+                    border: '1px solid ' + (active ? 'var(--amber-200)' : 'transparent'),
+                    background: active ? 'var(--amber-100)' : 'transparent',
+                    cursor: 'pointer',
+                  }}
+                  title={conv.titulo}
+                >
+                  <div
+                    style={{
+                      fontSize: 13,
+                      fontWeight: active ? 500 : 400,
+                      color: active ? 'var(--amber-700)' : 'var(--ink-700)',
+                      overflow: 'hidden',
+                      whiteSpace: 'nowrap',
+                      textOverflow: 'ellipsis',
+                    }}
+                  >
+                    {conv.titulo}
+                  </div>
+                </button>
+                <button
+                  type="button"
+                  className="conv-del"
+                  title="Eliminar conversación"
+                  aria-label="Eliminar conversación"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onEliminarConversacion?.(conv.id)
                   }}
                 >
-                  {conv.titulo}
-                </div>
-              </button>
+                  <Icon name="trash" size={14} />
+                </button>
+              </div>
             )
           })
         )}
@@ -710,6 +843,30 @@ function ChatSidebar({
           </div>
         </div>
       </div>
+
+      <style>{`
+        .conv-row { position: relative; }
+        .conv-del {
+          position: absolute;
+          right: 6px;
+          top: 50%;
+          transform: translateY(-50%);
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          width: 24px;
+          height: 24px;
+          border: none;
+          border-radius: 6px;
+          background: transparent;
+          color: var(--ink-400);
+          cursor: pointer;
+          opacity: 0;
+          transition: opacity .12s ease, color .12s ease, background .12s ease;
+        }
+        .conv-row:hover .conv-del { opacity: 1; }
+        .conv-del:hover { color: var(--danger); background: rgba(214, 90, 71, .12); }
+      `}</style>
     </aside>
   )
 }
@@ -806,13 +963,12 @@ function MessageGroup({ msg, onCite, onFeedback, activeChunk }) {
               fontSize: 15,
               lineHeight: 1.65,
               color: 'var(--ink-900)',
-              whiteSpace: 'pre-wrap',
               minHeight: 52,
             }}
           >
             {msg.respuesta ? (
               <>
-                {limpiarCitasInline(msg.respuesta)}
+                <Markdown text={limpiarCitasInline(msg.respuesta)} />
                 {isStreaming && <span className="stream-cursor" aria-hidden="true" />}
               </>
             ) : isStreaming ? (

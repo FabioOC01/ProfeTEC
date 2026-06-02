@@ -84,6 +84,9 @@ export const getHistorial = (cursoId, conversacionId = null) =>
 export const getConversaciones = (cursoId) =>
   api.get(`/cursos/${cursoId}/conversaciones`).then((r) => r.data)
 
+export const eliminarConversacion = (cursoId, conversacionId) =>
+  api.delete(`/cursos/${cursoId}/conversaciones/${conversacionId}`).then((r) => r.data)
+
 export const enviarFeedback = (cursoId, mensajeId, valor, comentario = null) =>
   api
     .patch(`/cursos/${cursoId}/chat/mensajes/${mensajeId}/feedback`, {
